@@ -1,0 +1,1 @@
+This package ("webDescription_Leon") is used to represent a webpage

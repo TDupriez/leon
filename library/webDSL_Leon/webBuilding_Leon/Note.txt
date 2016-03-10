@@ -1,0 +1,1 @@
+This package ("webBuilding_Leon") is used as a DSL in the source code manipulated by the user to produce an object using the "webDescription_Leon" package classes.
