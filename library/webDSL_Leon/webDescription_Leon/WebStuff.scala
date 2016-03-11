@@ -7,4 +7,5 @@ package webDSL_Leon.webDescription_Leon
 sealed trait WebStuff
 sealed trait WebAttribute extends WebStuff
 case class TestWebAttribute(oi: Int) extends WebAttribute
-case class WebElement(attributes: leon.collection.List[WebAttribute], sons: leon.collection.List[WebElement]) extends WebStuff
+
+case class WebElement(attributesAndSons: leon.collection.List[WebStuff]) extends WebStuff
