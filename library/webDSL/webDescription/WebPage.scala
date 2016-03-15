@@ -6,8 +6,8 @@ package webDSL.webDescription
   */
 
 
-//case class WebPage(webPageAttributes: leon.collection.List[WebPageAttribute], sons: leon.collection.List[WebElement])
-case class WebPage(leonList: leon.collection.List[Int])
+case class WebPage(webPageAttributes: leon.collection.List[WebPageAttribute], sons: leon.collection.List[WebElement])
+//case class WebPage(leonList: leon.collection.List[Int])
 
 //object WebPage {
 //  implicit val pickler: Pickler[WebPage] = generatePickler[WebPage]
