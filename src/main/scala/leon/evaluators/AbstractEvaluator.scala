@@ -84,6 +84,9 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
         }
       }
       callResult
+    case Let(i, ex, b) =>
+      val (first, second) = e(ex)
+      e(b)(rctx.withNewVar(i, first), gctx)
     case Operator(es, builder) =>
       val (ees, ts) = es.map(e).unzip
       if(ees forall ExprOps.isValue) {

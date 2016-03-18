@@ -8,3 +8,4 @@ package leon.webDSL.webDescription
 sealed trait WebElement
 
 case class TestWebElement1(sons: leon.collection.List[WebElement]) extends WebElement
+case class TestWebElement2(oi: Int) extends WebElement
