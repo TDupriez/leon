@@ -1,1 +1,3 @@
 This package ("webDescription_Leon") is used to represent a webpage
+
+All concrete classes fo this package must be declared in server/app/programEvaluator/WebDescriptionClassesRegister
