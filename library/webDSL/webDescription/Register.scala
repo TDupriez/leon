@@ -1,7 +1,7 @@
 package webDSL.webDescription
 
 
-import leon.webDSL.webDescription.{TestWebElement2, WebPage}
+import leon.webDSL.webDescription._
 
 import scala.collection.mutable
 //import scala.reflect.runtime.universe
