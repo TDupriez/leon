@@ -1,3 +1,9 @@
 This package ("webDescription_Leon") is used to represent a webpage
 
 All concrete classes fo this package must be declared in server/app/programEvaluator/WebDescriptionClassesRegister
+
+There is a chance that the classes from WebDescription may not be serialisable by default by boopickle)the serialisation library)
+Especially when there is recursive typing (ex: a case class whose argument is a list of elements of its class).
+If boopickle throws an error when attempting to serialise, the solution is to tell boopickle about the hierarchy so that he can serialise properly.
+This can be done in shared/src/main/scala/shared/Picklers (see the pickler for WebElement).
+Also, for unknown reasons, recursive typing will always fail when a class has a "List" of object of the same class as argument. Please use a "Seq" instead.

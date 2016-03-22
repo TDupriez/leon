@@ -9,3 +9,5 @@ sealed trait WebElement
 
 case class TestWebElement1(sons: leon.collection.List[WebElement]) extends WebElement
 case class TestWebElement2(oi: Int) extends WebElement
+case class Header(level: Int, text: String) extends WebElement
+case class Paragraph(text: String) extends WebElement

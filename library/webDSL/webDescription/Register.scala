@@ -9,6 +9,9 @@ import scala.collection.mutable
 /**
   * Created by dupriez on 3/21/16.
   *
+  * NEW: the following webpage provides useful info about reflecting at runtime when only knowing the name of the class:
+  *   http://www.veebsbraindump.com/2013/03/scala-2-10-runtime-reflection-from-a-class-name/
+  *
   * Unworking attempt at automating the unExpr of leon Expr by ProgramEvaluator.
   * All the concrete classes of webDescription would have registered themselves using the method below, and ProgramEvaluator could just take
   * the produced map and do:
