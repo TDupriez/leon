@@ -13,3 +13,13 @@ case object Text extends StringWebAttribute
 
 //TODO: create a type of map for StringWebAttributes, which would know the default values for
 //TODO: these attributes and allow shorter code when the client unpack webElement to turn them into scalajs-react element
+
+//case class StringWebAttributeValueHolder(text: String)
+//object StringWebAttribute {
+//  def getArgNumberOfWebAttributeInValueHolder(swa: StringWebAttribute) = {
+//    swa match {
+//      case Text => 1
+//      case _ => throw new RuntimeException("Unknown StringWebAttribute ("+swa+") was provided to the getArgNumberOfWebAttributeInValueHolder method")
+//    }
+//  }
+//}
