@@ -8,17 +8,21 @@ import leon.annotation.{ignore, extern}
   * All new subclasses of WebElement must also be registered in the pickler
   * (see shared/src/main/scala/shared/Picklers (the "webElementPickler" implicit val))
   */
-sealed trait WebElement// {
+sealed trait WebElement {
+  //WebElementID
+  var weid = 0
+  val sons: leon.collection.List[WebElement]
+  println("I'm being created")
 //  val id : WebElementID = WebElementIDProvider.generateFreshId()
-//}
+}
 
 //case class TestWebElement1(sons: leon.collection.List[WebElement]) extends WebElement
 //case class TestWebElement2(oi: Int) extends WebElement
-case class Div(sons: leon.collection.List[WebElement]) extends WebElement
-case class Header(text: String, level: HeaderLevel) extends WebElement
-case class Paragraph(text: String) extends WebElement
+case class Div(/*id: Int,*/ sons: leon.collection.List[WebElement]) extends WebElement //{var weid = id}
+case class Header(/*id: Int,*/ text: String, level: HeaderLevel) extends WebElement {override val sons = leon.collection.List[WebElement]()/*var weid = id*/}
+case class Paragraph(/*id: Int,*/ text: String) extends WebElement {override val sons = leon.collection.List[WebElement]()/*var weid = id*/}
 
-case class WebElementID(id: Int)
+//case class WebElementID(id: Int)
 //object WebElementIDProvider {
 //  @ignore
 //  private var counter = 0
