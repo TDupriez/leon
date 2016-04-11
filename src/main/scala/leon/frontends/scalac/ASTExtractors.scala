@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package frontends.scalac
@@ -44,6 +44,7 @@ trait ASTExtractors {
   protected lazy val scalaSetSym        = classFromName("scala.collection.immutable.Set")
   protected lazy val setSym             = classFromName("leon.lang.Set")
   protected lazy val mapSym             = classFromName("leon.lang.Map")
+  protected lazy val bagSym             = classFromName("leon.lang.Bag")
   protected lazy val realSym            = classFromName("leon.lang.Real")
   protected lazy val optionClassSym     = classFromName("scala.Option")
   protected lazy val arraySym           = classFromName("scala.Array")
@@ -78,6 +79,10 @@ trait ASTExtractors {
 
   def isSetSym(sym: Symbol) : Boolean = {
     getResolvedTypeSym(sym) == setSym
+  }
+
+  def isBagSym(sym: Symbol) : Boolean = {
+    getResolvedTypeSym(sym) == bagSym
   }
 
   def isRealSym(sym: Symbol) : Boolean = {
@@ -209,6 +214,37 @@ trait ASTExtractors {
          Some(contractBody)
         case _ => None
       }
+    }
+    
+    
+    /** Matches the `A computes B` expression at the end of any expression A, and returns (A, B).*/
+    object ExComputesExpression {
+      def unapply(tree: Apply) : Option[(Tree, Tree)] = tree match {
+        case Apply(Select(
+          Apply(TypeApply(ExSelected("leon", "lang", "package", "SpecsDecorations"), List(_)), realExpr :: Nil),
+          ExNamed("computes")), expected::Nil)
+         => Some((realExpr, expected))
+        case _ => None
+       }
+    }
+    
+    /** Matches the `O ask I` expression at the end of any expression O, and returns (I, O).*/
+    object ExAskExpression {
+      def unapply(tree: Apply) : Option[(Tree, Tree)] = tree match {
+        case Apply(TypeApply(Select(
+          Apply(TypeApply(ExSelected("leon", "lang", "package", "SpecsDecorations"), List(_)), output :: Nil),
+          ExNamed("ask")), List(_)), input::Nil)
+         => Some((input, output))
+        case _ => None
+       }
+    }
+    
+    object ExByExampleExpression {
+      def unapply(tree: Apply) : Option[(Tree, Tree)] = tree match {
+        case Apply(TypeApply(ExSelected("leon", "lang", "package", "byExample"), List(_, _)), input :: res_output :: Nil)
+         => Some((input, res_output))
+        case _ => None
+       }
     }
  
     /** Extracts the `(input, output) passes { case In => Out ...}` and returns (input, output, list of case classes) */
@@ -368,14 +404,17 @@ trait ASTExtractors {
           }.get.asInstanceOf[DefDef]
 
           val valDefs = constructor.vparamss.flatten
+          //println("valDefs: " + valDefs)
 
           //impl.children foreach println
 
           val symbols = impl.children.collect {
-            case df: DefDef if df.symbol.isStable && df.symbol.isAccessor &&
-                df.symbol.isParamAccessor =>
-              df.symbol
+            case df@DefDef(_, name, _, _, _, _) if 
+              df.symbol.isAccessor && df.symbol.isParamAccessor 
+              && !name.endsWith("_$eq") => df.symbol
           }
+          //println("symbols: " + symbols)
+          //println("symbols accessed: " + symbols.map(_.accessed))
 
           //if (symbols.size != valDefs.size) {
           //  println(" >>>>> " + cd.name)
@@ -469,6 +508,36 @@ trait ASTExtractors {
         case _ => None
       }
     }
+
+    object ExMutatorAccessorFunction {
+      def unapply(dd: DefDef): Option[(Symbol, Seq[Symbol], Seq[ValDef], Type, Tree)] = dd match {
+        case DefDef(_, name, tparams, vparamss, tpt, rhs) if(
+          vparamss.size <= 1 && name != nme.CONSTRUCTOR && 
+          !dd.symbol.isSynthetic && dd.symbol.isAccessor && name.endsWith("_$eq")
+        ) =>
+          Some((dd.symbol, tparams.map(_.symbol), vparamss.flatten, tpt.tpe, rhs))
+        case _ => None
+      }
+    }
+    object ExMutableFieldDef {
+
+      /** Matches a definition of a strict var field inside a class constructor */
+      def unapply(vd: SymTree) : Option[(Symbol, Type, Tree)] = {
+        val sym = vd.symbol
+        vd match {
+          // Implemented fields
+          case ValDef(mods, name, tpt, rhs) if (
+            !sym.isCaseAccessor && !sym.isParamAccessor && 
+            !sym.isLazy && !sym.isSynthetic && !sym.isAccessor && sym.isVar
+          ) =>
+            println("matched a var accessor field: sym is: " + sym)
+            println("getterIn is: " + sym.getterIn(sym.owner))
+            // Since scalac uses the accessor symbol all over the place, we pass that instead:
+            Some( (sym.getterIn(sym.owner),tpt.tpe,rhs) )
+          case _ => None
+        }
+      }
+    }
        
     object ExFieldDef {
       /** Matches a definition of a strict field inside a class constructor */
@@ -478,7 +547,7 @@ trait ASTExtractors {
           // Implemented fields
           case ValDef(mods, name, tpt, rhs) if (
             !sym.isCaseAccessor && !sym.isParamAccessor && 
-            !sym.isLazy && !sym.isSynthetic && !sym.isAccessor 
+            !sym.isLazy && !sym.isSynthetic && !sym.isAccessor && !sym.isVar
           ) =>
             // Since scalac uses the accessor symbol all over the place, we pass that instead:
             Some( (sym.getterIn(sym.owner),tpt.tpe,rhs) )
@@ -567,16 +636,6 @@ trait ASTExtractors {
               TypeApply(ExSymbol("leon", "lang", "xlang", "epsilon"), typeTree :: Nil),
               Function((vd @ ValDef(_, _, _, EmptyTree)) :: Nil, predicateBody) :: Nil) =>
             Some((typeTree, vd.symbol, predicateBody))
-        case _ => None
-      }
-    }
-
-    object ExWaypointExpression {
-      def unapply(tree: Apply) : Option[(Tree, Tree, Tree)] = tree match {
-        case Apply(
-              TypeApply(ExSymbol("leon", "lang", "xlang", "waypoint"), typeTree :: Nil),
-              List(i, expr)) =>
-            Some((typeTree, i, expr))
         case _ => None
       }
     }
@@ -674,6 +733,7 @@ trait ASTExtractors {
     object ExAssign {
       def unapply(tree: Assign): Option[(Symbol,Tree)] = tree match {
         case Assign(id@Ident(_), rhs) => Some((id.symbol, rhs))
+        //case Assign(sym@Select(This(_), v), rhs) => Some((sym.symbol, rhs))
         case _ => None
       }
     }
@@ -978,6 +1038,16 @@ trait ASTExtractors {
         case Apply(TypeApply(ExSelected("Set", "apply"), Seq(tpt)), args) =>
           Some(tpt, args)
         case Apply(TypeApply(ExSelected("leon", "lang", "Set", "apply"), Seq(tpt)), args) =>
+          Some(tpt, args)
+        case _ => None
+      }
+    }
+
+    object ExFiniteBag {
+      def unapply(tree: Apply): Option[(Tree, List[Tree])] = tree match {
+        case Apply(TypeApply(ExSelected("Bag", "apply"), Seq(tpt)), args) =>
+          Some(tpt, args)
+        case Apply(TypeApply(ExSelected("leon", "lang", "Bag", "apply"), Seq(tpt)), args) =>
           Some(tpt, args)
         case _ => None
       }

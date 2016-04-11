@@ -1,10 +1,12 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package solvers
 
 import combinators._
+import unrolling._
 import z3._
+import cvc4._
 import smtlib._
 
 import purescala.Definitions._
@@ -49,7 +51,7 @@ object SolverFactory {
     }.mkString("")
 
   def getFromSettings(implicit ctx: LeonContext, program: Program): SolverFactory[TimeoutSolver] = {
-    val names = ctx.findOptionOrDefault(SharedOptions.optSelectedSolvers)
+    val names = ctx.findOptionOrDefault(GlobalOptions.optSelectedSolvers)
 
     if (((names contains "fairz3") || (names contains "unrollz3")) && !hasNativeZ3) {
       if (hasZ3) {
@@ -79,12 +81,10 @@ object SolverFactory {
 
   def getFromName(ctx: LeonContext, program: Program)(name: String): SolverFactory[TimeoutSolver] = name match {
     case "fairz3" =>
-      // Previously:      new FairZ3Solver(ctx, program) with TimeoutSolver
-      SolverFactory(() => new Z3StringFairZ3Solver(ctx, program) with TimeoutSolver)
+      SolverFactory(() => new FairZ3Solver(ctx, program) with TimeoutSolver)
 
     case "unrollz3" =>
-      // Previously:      new UnrollingSolver(ctx, program, new UninterpretedZ3Solver(ctx, program)) with TimeoutSolver
-      SolverFactory(() => new Z3StringUnrollingSolver(ctx, program, (program: Program) => new UninterpretedZ3Solver(ctx, program)) with TimeoutSolver)
+      SolverFactory(() => new Z3UnrollingSolver(ctx, program, new UninterpretedZ3Solver(ctx, program)) with TimeoutSolver)
 
     case "enum"   =>
       SolverFactory(() => new EnumerationSolver(ctx, program) with TimeoutSolver)
@@ -93,15 +93,13 @@ object SolverFactory {
       SolverFactory(() => new GroundSolver(ctx, program) with TimeoutSolver)
 
     case "smt-z3" =>
-      // Previously:      new UnrollingSolver(ctx, program, new SMTLIBZ3Solver(ctx, program)) with TimeoutSolver
-      SolverFactory(() => new Z3StringUnrollingSolver(ctx, program, (program: Program) => new SMTLIBZ3Solver(ctx, program)) with TimeoutSolver)
+      SolverFactory(() => new Z3UnrollingSolver(ctx, program, new SMTLIBZ3Solver(ctx, program)) with TimeoutSolver)
 
     case "smt-z3-q" =>
-      // Previously:      new SMTLIBZ3QuantifiedSolver(ctx, program) with TimeoutSolver
-      SolverFactory(() => new Z3StringSMTLIBZ3QuantifiedSolver(ctx, program) with TimeoutSolver)
+      SolverFactory(() => new SMTLIBZ3QuantifiedSolver(ctx, program) with TimeoutSolver)
 
     case "smt-cvc4" =>
-      SolverFactory(() => new UnrollingSolver(ctx, program, new SMTLIBCVC4Solver(ctx, program)) with TimeoutSolver)
+      SolverFactory(() => new CVC4UnrollingSolver(ctx, program, new SMTLIBCVC4Solver(ctx, program)) with TimeoutSolver)
 
     case "smt-cvc4-proof" =>
       SolverFactory(() => new SMTLIBCVC4ProofSolver(ctx, program) with TimeoutSolver)
@@ -138,7 +136,7 @@ object SolverFactory {
 
   // Fast solver used by simplifications, to discharge simple tautologies
   def uninterpreted(ctx: LeonContext, program: Program): SolverFactory[TimeoutSolver] = {
-    val names = ctx.findOptionOrDefault(SharedOptions.optSelectedSolvers)
+    val names = ctx.findOptionOrDefault(GlobalOptions.optSelectedSolvers)
     
     if ((names contains "fairz3") && !hasNativeZ3) {
       if (hasZ3) {

@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package solvers
@@ -6,12 +6,12 @@ package solvers
 import purescala.Types._
 import purescala.Common._
 
-case class DataType(sym: Identifier, cases: Seq[Constructor]) {
+case class DataType(sym: Identifier, cases: Seq[Constructor]) extends Printable {
   def asString(implicit ctx: LeonContext) = {
     "Datatype: "+sym.asString+"\n"+cases.map(c => " - "+c.asString(ctx)).mkString("\n")
   }
 }
-case class Constructor(sym: Identifier, tpe: TypeTree, fields: Seq[(Identifier, TypeTree)]) {
+case class Constructor(sym: Identifier, tpe: TypeTree, fields: Seq[(Identifier, TypeTree)]) extends Printable {
   def asString(implicit ctx: LeonContext) = {
     sym.asString(ctx)+" ["+tpe.asString(ctx)+"] "+fields.map(f => f._1.asString(ctx)+": "+f._2.asString(ctx)).mkString("(", ", ", ")")
   }
@@ -134,6 +134,17 @@ class ADTManager(ctx: LeonContext) {
         discovered += (at -> DataType(sym, Seq(c)))
 
         findDependencies(base)
+      }
+
+    case tp @ TypeParameter(id) =>
+      if (!(discovered contains t) && !(defined contains t)) {
+        val sym = freshId(id.name)
+
+        val c = Constructor(freshId(sym.name), tp, List(
+          (freshId("val"), IntegerType)
+        ))
+
+        discovered += (tp -> DataType(sym, Seq(c)))
       }
 
     case _ =>

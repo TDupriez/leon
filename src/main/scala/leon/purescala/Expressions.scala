@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon.purescala
 
@@ -234,7 +234,6 @@ object Expressions {
   /* Universal Quantification */
 
   case class Forall(args: Seq[ValDef], body: Expr) extends Expr {
-    assert(body.getType == BooleanType)
     val getType = BooleanType
   }
 
@@ -388,7 +387,7 @@ object Expressions {
     * @param out The output expression
     * @param cases The cases to compare against
     */
-  case class Passes(in: Expr, out : Expr, cases : Seq[MatchCase]) extends Expr {
+  case class Passes(in: Expr, out: Expr, cases: Seq[MatchCase]) extends Expr {
     require(cases.nonEmpty)
 
     val getType = leastUpperBound(cases.map(_.rhs.getType)) match {
@@ -444,7 +443,6 @@ object Expressions {
     * This is useful e.g. to present counterexamples of generic types.
     */
   case class GenericValue(tp: TypeParameter, id: Int) extends Expr with Terminal {
-  // TODO: Is it valid that GenericValue(tp, 0) != GenericValue(tp, 1)?
     val getType = tp
   }
 
@@ -497,6 +495,7 @@ object Expressions {
     val getType = {
       if (typesCompatible(lhs.getType, rhs.getType)) BooleanType
       else {
+        //println(s"Incompatible argument types: arguments: ($lhs, $rhs) types: ${lhs.getType}, ${rhs.getType}")
         Untyped
       }
     }
@@ -786,7 +785,7 @@ object Expressions {
     *
     * [[exprs]] should always contain at least 2 elements.
     * If you are not sure about this requirement, you should use
-    * [[leon.purescala.Constructors#tupleWrap purescala's constructor tupleWrap]]
+    * [[leon.purescala.Constructors.tupleWrap purescala's constructor tupleWrap]]
     *
     * @param exprs The expressions in the tuple
     */
@@ -821,9 +820,22 @@ object Expressions {
   case class FiniteSet(elements: Set[Expr], base: TypeTree) extends Expr {
     val getType = SetType(base).unveilUntyped
   }
+  /** $encodingof `set + elem` */
+  case class SetAdd(set: Expr, elem: Expr) extends Expr {
+    val getType = {
+      val base = set.getType match {
+        case SetType(base) => base
+        case _ => Untyped
+      }
+      checkParamTypes(Seq(elem.getType), Seq(base), SetType(base).unveilUntyped)
+    }
+  }
   /** $encodingof `set.contains(element)` or `set(element)` */
   case class ElementOfSet(element: Expr, set: Expr) extends Expr {
-    val getType = BooleanType
+    val getType = checkParamTypes(Seq(element.getType), Seq(set.getType match {
+      case SetType(base) => base
+      case _ => Untyped
+    }), BooleanType)
   }
   /** $encodingof `set.length` */
   case class SetCardinality(set: Expr) extends Expr {
@@ -831,9 +843,12 @@ object Expressions {
   }
   /** $encodingof `set.subsetOf(set2)` */
   case class SubsetOf(set1: Expr, set2: Expr) extends Expr {
-    val getType  = BooleanType
+    val getType = (set1.getType, set2.getType) match {
+      case (SetType(b1), SetType(b2)) if b1 == b2 => BooleanType
+      case _ => Untyped
+    }
   }
-  /** $encodingof `set.intersect(set2)` */
+  /** $encodingof `set & set2` */
   case class SetIntersection(set1: Expr, set2: Expr) extends Expr {
     val getType = leastUpperBound(Seq(set1, set2).map(_.getType)).getOrElse(Untyped).unveilUntyped
   }
@@ -845,6 +860,42 @@ object Expressions {
   case class SetDifference(set1: Expr, set2: Expr) extends Expr {
     val getType = leastUpperBound(Seq(set1, set2).map(_.getType)).getOrElse(Untyped).unveilUntyped
   }
+
+  /* Bag operations */
+  /** $encodingof `Bag[base](elements)` */
+  case class FiniteBag(elements: Map[Expr, Expr], base: TypeTree) extends Expr {
+    val getType = BagType(base).unveilUntyped
+  }
+  /** $encodingof `bag + elem` */
+  case class BagAdd(bag: Expr, elem: Expr) extends Expr {
+    val getType = {
+      val base = bag.getType match {
+        case BagType(base) => base
+        case _ => Untyped
+      }
+      checkParamTypes(Seq(base), Seq(elem.getType), BagType(base).unveilUntyped)
+    }
+  }
+  /** $encodingof `bag.get(element)` or `bag(element)` */
+  case class MultiplicityInBag(element: Expr, bag: Expr) extends Expr {
+    val getType = checkParamTypes(Seq(element.getType), Seq(bag.getType match {
+      case BagType(base) => base
+      case _ => Untyped
+    }), IntegerType)
+  }
+  /** $encodingof `bag1 & bag2` */
+  case class BagIntersection(bag1: Expr, bag2: Expr) extends Expr {
+    val getType = leastUpperBound(Seq(bag1, bag2).map(_.getType)).getOrElse(Untyped).unveilUntyped
+  }
+  /** $encodingof `bag1 ++ bag2` */
+  case class BagUnion(bag1: Expr, bag2: Expr) extends Expr {
+    val getType = leastUpperBound(Seq(bag1, bag2).map(_.getType)).getOrElse(Untyped).unveilUntyped
+  }
+  /** $encodingof `bag1 -- bag2` */
+  case class BagDifference(bag1: Expr, bag2: Expr) extends Expr {
+    val getType = leastUpperBound(Seq(bag1, bag2).map(_.getType)).getOrElse(Untyped).unveilUntyped
+  }
+
 
   // TODO: Add checks for these expressions too
 

@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package verification
@@ -7,7 +7,6 @@ import purescala.Definitions._
 import purescala.ExprOps._
 
 import scala.concurrent.duration._
-import java.lang.System
 
 import solvers._
 
@@ -15,15 +14,15 @@ object VerificationPhase extends SimpleLeonPhase[Program,VerificationReport] {
   val name = "Verification"
   val description = "Verification of function contracts"
 
-  val optParallelVCs = LeonFlagOptionDef("parallel", "Check verification conditions in parallel", default = false)
-
+  val optParallelVCs = LeonFlagOptionDef("parallel", "Check verification conditions in parallel", default = false)  
+  
   override val definedOptions: Set[LeonOptionDef[Any]] = Set(optParallelVCs)
 
   implicit val debugSection = utils.DebugSectionVerification
 
   def apply(ctx: LeonContext, program: Program): VerificationReport = {
-    val filterFuns: Option[Seq[String]] = ctx.findOption(SharedOptions.optFunctions)
-    val timeout:    Option[Long]        = ctx.findOption(SharedOptions.optTimeout)
+    val filterFuns: Option[Seq[String]] = ctx.findOption(GlobalOptions.optFunctions)
+    val timeout:    Option[Long]        = ctx.findOption(GlobalOptions.optTimeout)
 
     val reporter = ctx.reporter
 
@@ -71,12 +70,15 @@ object VerificationPhase extends SimpleLeonPhase[Program,VerificationReport] {
   def generateVCs(vctx: VerificationContext, toVerify: Seq[FunDef]): Seq[VC] = {
     val defaultTactic   = new DefaultTactic(vctx)
     val inductionTactic = new InductionTactic(vctx)
+    val trInductTactic = new TraceInductionTactic(vctx)
 
     val vcs = for(funDef <- toVerify) yield {
       val tactic: Tactic =
         if (funDef.annotations.contains("induct")) {
           inductionTactic
-        } else {
+        } else if(funDef.annotations.contains("traceInduct")){
+          trInductTactic
+        }else {          
           defaultTactic
         }
 

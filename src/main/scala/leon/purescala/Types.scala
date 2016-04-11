@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package purescala
@@ -80,6 +80,7 @@ object Types {
   }
 
   case class SetType(base: TypeTree) extends TypeTree
+  case class BagType(base: TypeTree) extends TypeTree
   case class MapType(from: TypeTree, to: TypeTree) extends TypeTree
   case class FunctionType(from: Seq[TypeTree], to: TypeTree) extends TypeTree
   case class ArrayType(base: TypeTree) extends TypeTree
@@ -142,6 +143,7 @@ object Types {
       case TupleType(ts) => Some((ts, Constructors.tupleTypeWrap _))
       case ArrayType(t) => Some((Seq(t), ts => ArrayType(ts.head)))
       case SetType(t) => Some((Seq(t), ts => SetType(ts.head)))
+      case BagType(t) => Some((Seq(t), ts => BagType(ts.head)))
       case MapType(from,to) => Some((Seq(from, to), t => MapType(t(0), t(1))))
       case FunctionType(fts, tt) => Some((tt +: fts, ts => FunctionType(ts.tail.toList, ts.head)))
       /* n-ary operators */

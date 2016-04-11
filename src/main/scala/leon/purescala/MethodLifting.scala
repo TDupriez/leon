@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package purescala
@@ -11,6 +11,7 @@ import ExprOps._
 import Types._
 import Constructors._
 import TypeOps.instantiateType
+import xlang.Expressions._
 
 object MethodLifting extends TransformationPhase {
 
@@ -155,19 +156,18 @@ object MethodLifting extends TransformationPhase {
             isInstOf(Variable(receiver), cl.typed(ctParams map { _.tp }))
         }
 
-
         if (cd.knownDescendants.forall( cd => (cd.methods ++ cd.fields).forall(_.id != fd.id))) {
           // Don't need to compose methods
-          val paramsMap = fd.params.zip(fdParams).map{case (x,y) => (x.id, y.id)}.toMap
+          val paramsMap = fd.params.zip(fdParams).map { case (x,y) => (x.id, y.id) }.toMap
           def thisToReceiver(e: Expr): Option[Expr] = e match {
-            case th@This(ct) =>
+            case th @ This(ct) =>
               Some(asInstOf(receiver.toVariable, ct).setPos(th))
             case _ =>
               None
           }
 
           val insTp: Expr => Expr = instantiateType(_, tparamsMap, paramsMap)
-          nfd.fullBody = insTp( postMap(thisToReceiver)(insTp(nfd.fullBody)) )
+          nfd.fullBody = postMap(thisToReceiver)(insTp(nfd.fullBody))
 
           // Add precondition if the method was defined in a subclass
           val pre = and(
@@ -185,19 +185,22 @@ object MethodLifting extends TransformationPhase {
             m <- c.methods if m.id == fd.id
             (from,to) <- m.params zip fdParams
           } yield (from.id, to.id)).toMap
+
           val classParamsMap = (for {
             c <- cd.knownDescendants :+ cd
             (from, to) <- c.tparams zip ctParams
           } yield (from, to.tp)).toMap
+
           val methodParamsMap = (for {
             c <- cd.knownDescendants :+ cd
             m <- c.methods if m.id == fd.id
             (from,to) <- m.tparams zip fd.tparams
           } yield (from, to.tp)).toMap
+
           def inst(cs: Seq[MatchCase]) = instantiateType(
             matchExpr(Variable(receiver), cs).setPos(fd),
             classParamsMap ++ methodParamsMap,
-            paramsMap
+            paramsMap + (receiver -> receiver)
           )
 
           /* Separately handle pre, post, body */
@@ -220,6 +223,7 @@ object MethodLifting extends TransformationPhase {
 
             Some(and(classPre(fd), compositePre))
           }
+
           val postSimple = {
             val trivial = post.forall {
               case SimpleCase(_, Lambda(_, BooleanLiteral(true))) => true
@@ -236,6 +240,7 @@ object MethodLifting extends TransformationPhase {
               ).setPos(fd))
             }
           }
+
           val bodySimple = {
             val trivial = body forall {
               case SimpleCase(_, NoTree(_)) => true

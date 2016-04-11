@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package solvers
@@ -49,10 +49,6 @@ trait SMTLIBCVC4Target extends SMTLIBTarget {
           case _: Throwable =>
             super.fromSMT(t, otpe)
         }
-
-      case (SimpleSymbol(s), Some(tp: TypeParameter)) =>
-        val n = s.name.split("_").toList.last
-        GenericValue(tp, n.toInt)
 
       case (QualifiedIdentifier(SMTIdentifier(SSymbol("emptyset"), Seq()), _), Some(SetType(base))) =>
         FiniteSet(Set(), base)

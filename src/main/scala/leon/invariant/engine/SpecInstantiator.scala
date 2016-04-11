@@ -1,3 +1,5 @@
+/* Copyright 2009-2016 EPFL, Lausanne */
+
 package leon
 package invariant.engine
 import z3.scala._
@@ -5,6 +7,7 @@ import purescala.Common._
 import purescala.Definitions._
 import purescala.Expressions._
 import purescala.ExprOps._
+import leon.purescala.TypeOps.instantiateType
 import purescala.Extractors._
 import purescala.Types._
 import java.io._
@@ -14,6 +17,7 @@ import scala.util.control.Breaks._
 import solvers._
 import scala.concurrent._
 import scala.concurrent.duration._
+import leon.evaluators.DefaultEvaluator
 
 import invariant.templateSolvers._
 import invariant.factories._
@@ -47,7 +51,7 @@ class SpecInstantiator(ctx: InferenceContext, program: Program, ctrTracker: Cons
       val newguards = disjuncts.keySet.diff(exploredGuards)
       exploredGuards ++= newguards
 
-      val newcalls = newguards.flatMap(g => disjuncts(g).collect { case c: Call => c })
+      val newcalls = formula.getCallsOfGuards(newguards.toSeq).toSet //flatMap(g => disjuncts(g).collect { case c: Call => c })
       instantiateSpecs(formula, newcalls, funcs.toSet)
 
       if (!disableAxioms) {
@@ -85,44 +89,49 @@ class SpecInstantiator(ctx: InferenceContext, program: Program, ctrTracker: Cons
       val spec = specForCall(call)
       if (spec.isDefined && spec.get != tru) {
         val cdata = formula.callData(call)
-        formula.conjoinWithDisjunct(cdata.guard, spec.get, cdata.parents)
+        formula.conjoinWithDisjunct(cdata.guard, spec.get, cdata.parents, inSpec = true)
       }
     })
 
     //try to assume templates for all the current un-templated calls
     var newUntemplatedCalls = Set[Call]()
-    getUntempCalls(formula.fd).foreach((call) => {
-      //first get the template for the call if one needs to be added
-      if (funcsWithVC.contains(call.fi.tfd.fd)) {
+    getUntempCalls(formula.fd).foreach { call =>
+      if (funcsWithVC.contains(call.fi.tfd.fd)) { // add templates of only functions for which there exists a VC
         templateForCall(call) match {
           case Some(temp) =>
             val cdata = formula.callData(call)
-            formula.conjoinWithDisjunct(cdata.guard, temp, cdata.parents)
+            formula.conjoinWithDisjunct(cdata.guard, temp, cdata.parents, inSpec = true)
           case _ =>
             ; // here there is no template for the call
         }
       } else {
         newUntemplatedCalls += call
       }
-    })
+    }
     resetUntempCalls(formula.fd, newUntemplatedCalls ++ calls)
   }
 
   def specForCall(call: Call): Option[Expr] = {
     val argmap = formalToActual(call)
-    val callee = call.fi.tfd.fd
+    val tfd = call.fi.tfd
+    val callee = tfd.fd
     if (callee.hasPostcondition) {
+      // instantiate the post
+      val tparamMap = (callee.tparams zip tfd.tps).toMap
+      val trans = freshenLocals _ andThen (e => instantiateType(e, tparamMap, Map()))
       //get the postcondition without templates
-      val post = callee.getPostWoTemplate
-      val freshPost = freshenLocals(matchToIfThenElse(post))
-
-      val spec = if (callee.hasPrecondition) {
-        val freshPre = freshenLocals(matchToIfThenElse(callee.precondition.get))
-        Implies(freshPre, freshPost)
+      val rawpost = trans(callee.getPostWoTemplate)
+      val rawspec = if (callee.hasPrecondition) {
+        val pre = trans(callee.precondition.get)
+        if (ctx.assumepre)
+          And(pre, rawpost)
+        else
+          Implies(pre, rawpost)
       } else {
-        freshPost
+        rawpost
       }
-      val inlinedSpec = ExpressionTransformer.normalizeExpr(replace(argmap, spec), ctx.multOp)
+      val spec = replace(argmap, rawspec)
+      val inlinedSpec = ExpressionTransformer.normalizeExpr(spec, ctx.multOp)
       Some(inlinedSpec)
     } else {
       None
@@ -130,18 +139,23 @@ class SpecInstantiator(ctx: InferenceContext, program: Program, ctrTracker: Cons
   }
 
   def templateForCall(call: Call): Option[Expr] = {
-    val callee = call.fi.tfd.fd
+    val tfd = call.fi.tfd
+    val callee = tfd.fd
     if (callee.hasTemplate) {
       val argmap = formalToActual(call)
-      val tempExpr = replace(argmap, callee.getTemplate)
+      val tparamMap = (callee.tparams zip tfd.tps).toMap
+      val tempExpr = replace(argmap, instantiateType(callee.getTemplate, tparamMap, Map()))
       val template = if (callee.hasPrecondition) {
-        val freshPre = replace(argmap, freshenLocals(matchToIfThenElse(callee.precondition.get)))
-        Implies(freshPre, tempExpr)
+        val pre = replace(argmap, instantiateType(callee.precondition.get, tparamMap, Map()))
+        val freshPre =  freshenLocals(pre)
+        if (ctx.assumepre)
+          And(freshPre, tempExpr)
+        else
+          Implies(freshPre, tempExpr)
       } else {
         tempExpr
       }
-      //flatten functions
-      //TODO: should we freshen locals here ??
+      //TODO: should we freshen locals of template here ??
       Some(ExpressionTransformer.normalizeExpr(template, ctx.multOp))
     } else None
   }
@@ -188,7 +202,7 @@ class SpecInstantiator(ctx: InferenceContext, program: Program, ctrTracker: Cons
         val axiomInst = Implies(ant, conseq)
         val nnfAxiom = ExpressionTransformer.normalizeExpr(axiomInst, ctx.multOp)
         val cdata = formula.callData(call)
-        formula.conjoinWithDisjunct(cdata.guard, nnfAxiom, cdata.parents)
+        formula.conjoinWithDisjunct(cdata.guard, nnfAxiom, cdata.parents, inSpec = true)
         axiomInst
       }
     }
@@ -242,7 +256,7 @@ class SpecInstantiator(ctx: InferenceContext, program: Program, ctrTracker: Cons
         val (ant, conseq) = inst
         val axiom = Implies(ant, conseq)
         val nnfAxiom = ExpressionTransformer.normalizeExpr(axiom, ctx.multOp)
-        val (axroot, _) = formula.conjoinWithRoot(nnfAxiom, parents)
+        val axroot = formula.conjoinWithRoot(nnfAxiom, parents, true)
         //important: here we need to update the axiom roots
         axiomRoots += (Seq(pair._1, pair._2) -> axroot)
         acc :+ axiom
@@ -256,7 +270,7 @@ class SpecInstantiator(ctx: InferenceContext, program: Program, ctrTracker: Cons
    * Note: taking a formula as input may not be necessary. We can store it as a part of the state
    * TODO: can we use transitivity here to optimize ?
    */
-  def axiomsForCalls(formula: Formula, calls: Set[Call], model: Model): Seq[Constraint] = {
+  def axiomsForCalls(formula: Formula, calls: Set[Call], model: LazyModel, tmplMap: Map[Identifier,Expr], eval: DefaultEvaluator): Seq[Constraint] = {
     //note: unary axioms need not be instantiated
     //consider only binary axioms
     (for (x <- calls; y <- calls) yield (x, y)).foldLeft(Seq[Constraint]())((acc, pair) => {
@@ -264,7 +278,7 @@ class SpecInstantiator(ctx: InferenceContext, program: Program, ctrTracker: Cons
       if (c1 != c2) {
         val axRoot = axiomRoots.get(Seq(c1, c2))
         if (axRoot.isDefined)
-          acc ++ formula.pickSatDisjunct(axRoot.get, model)
+          acc ++ formula.pickSatDisjunct(axRoot.get, model, tmplMap, eval)
         else acc
       } else acc
     })

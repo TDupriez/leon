@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package purescala
@@ -42,9 +42,12 @@ class PrettyPrinter(opts: PrinterOptions,
       body
     }
   }
+  
+  protected def getScope(implicit ctx: PrinterContext) = 
+    ctx.parents.collectFirst { case (d: Definition) if !d.isInstanceOf[ValDef] => d }
 
   protected def printNameWithPath(df: Definition)(implicit ctx: PrinterContext) {
-    (opgm, ctx.parents.collectFirst { case (d: Definition) if !d.isInstanceOf[ValDef] => d }) match {
+    (opgm, getScope) match {
       case (Some(pgm), Some(scope)) =>
         sb.append(fullNameFrom(df, scope, opts.printUniqueIds)(pgm))
 
@@ -114,11 +117,17 @@ class PrettyPrinter(opts: PrinterOptions,
             |}"""
 
       case p@Passes(in, out, tests) =>
-        optP {
-          p"""|($in, $out) passes {
-              |  ${nary(tests, "\n")}
-              |}"""
+        tests match {
+          case Seq(MatchCase(_, Some(BooleanLiteral(false)), NoTree(_))) =>
+            p"""|byExample($in, $out)"""
+          case _ =>
+            optP {
+              p"""|($in, $out) passes {
+                  |  ${nary(tests, "\n")}
+                  |}"""
+            }
         }
+        
 
       case c @ WithOracle(vars, pred) =>
         p"""|withOracle { (${typed(vars)}) =>
@@ -127,7 +136,11 @@ class PrettyPrinter(opts: PrinterOptions,
 
       case h @ Hole(tpe, es) =>
         if (es.isEmpty) {
-          p"???[$tpe]"
+          val hole = (for{scope   <- getScope
+                          program <- opgm }
+              yield simplifyPath("leon" :: "lang" :: "synthesis" :: "???" :: Nil, scope, false)(program))
+              .getOrElse("leon.lang.synthesis.???")
+          p"$hole[$tpe]"
         } else {
           p"?($es)"
         }
@@ -308,16 +321,23 @@ class PrettyPrinter(opts: PrinterOptions,
       case RealTimes(l,r)            => optP { p"$l * $r" }
       case RealDivision(l,r)         => optP { p"$l / $r" }
       case fs @ FiniteSet(rs, _)     => p"{${rs.toSeq}}"
+      case fs @ FiniteBag(rs, _)     => p"{$rs}"
       case fm @ FiniteMap(rs, _, _)  => p"{$rs}"
       case Not(ElementOfSet(e,s))    => p"$e \u2209 $s"
       case ElementOfSet(e,s)         => p"$e \u2208 $s"
       case SubsetOf(l,r)             => p"$l \u2286 $r"
       case Not(SubsetOf(l,r))        => p"$l \u2288 $r"
+      case SetAdd(s,e)               => p"$s \u222A {$e}"
       case SetUnion(l,r)             => p"$l \u222A $r"
+      case BagUnion(l,r)             => p"$l \u222A $r"
       case MapUnion(l,r)             => p"$l \u222A $r"
       case SetDifference(l,r)        => p"$l \\ $r"
+      case BagDifference(l,r)        => p"$l \\ $r"
       case SetIntersection(l,r)      => p"$l \u2229 $r"
+      case BagIntersection(l,r)      => p"$l \u2229 $r"
       case SetCardinality(s)         => p"$s.size"
+      case BagAdd(b,e)               => p"$b + $e"
+      case MultiplicityInBag(e, b)   => p"$b($e)"
       case MapApply(m,k)             => p"$m($k)"
       case MapIsDefinedAt(m,k)       => p"$m.isDefinedAt($k)"
       case ArrayLength(a)            => p"$a.length"
@@ -354,6 +374,8 @@ class PrettyPrinter(opts: PrinterOptions,
       case Not(expr) => p"\u00AC$expr"
 
       case vd @ ValDef(id) =>
+        if(vd.isVar)
+          p"var "
         p"$id : ${vd.getType}"
         vd.defaultValue.foreach { fd => p" = ${fd.body.get}" }
 
@@ -379,11 +401,9 @@ class PrettyPrinter(opts: PrinterOptions,
               |}"""
         }
 
-      /*
       case LetPattern(p,s,rhs) =>
         p"""|val $p = $s
             |$rhs"""
-      */
 
       case MatchExpr(s, csc) =>
         optP {
@@ -451,6 +471,7 @@ class PrettyPrinter(opts: PrinterOptions,
       case StringType            => p"String"
       case ArrayType(bt)         => p"Array[$bt]"
       case SetType(bt)           => p"Set[$bt]"
+      case BagType(bt)           => p"Bag[$bt]"
       case MapType(ft,tt)        => p"Map[$ft, $tt]"
       case TupleType(tpes)       => p"($tpes)"
       case FunctionType(fts, tt) => p"($fts) => $tt"
@@ -484,10 +505,10 @@ class PrettyPrinter(opts: PrinterOptions,
             |  ${nary(defs, "\n\n")}
             |}"""
 
-      case acd @ AbstractClassDef(id, tparams, parent) =>
-        p"abstract class $id${nary(tparams, ", ", "[", "]")}"
+      case acd : AbstractClassDef =>
+        p"abstract class ${acd.id}${nary(acd.tparams, ", ", "[", "]")}"
 
-        parent.foreach{ par =>
+        acd.parent.foreach{ par =>
           p" extends ${par.id}"
         }
 
@@ -497,27 +518,27 @@ class PrettyPrinter(opts: PrinterOptions,
               |}"""
         }
 
-      case ccd @ CaseClassDef(id, tparams, parent, isObj) =>
-        if (isObj) {
-          p"case object $id"
+      case ccd : CaseClassDef =>
+        if (ccd.isCaseObject) {
+          p"case object ${ccd.id}"
         } else {
-          p"case class $id"
+          p"case class ${ccd.id}"
         }
 
-        p"${nary(tparams, ", ", "[", "]")}"
+        p"${nary(ccd.tparams, ", ", "[", "]")}"
 
-        if (!isObj) {
+        if (!ccd.isCaseObject) {
           p"(${ccd.fields})"
         }
 
-        parent.foreach { par =>
+        ccd.parent.foreach { par =>
           // Remember child and parents tparams are simple bijection
-          p" extends ${par.id}${nary(tparams, ", ", "[", "]")}"
+          p" extends ${par.id}${nary(ccd.tparams, ", ", "[", "]")}"
         }
 
         if (ccd.methods.nonEmpty) {
           p"""| {
-              |  ${nary(ccd.methods, "\n\n")}
+              |  ${nary(ccd.methods, "\n\n") }
               |}"""
         }
 
@@ -645,8 +666,8 @@ class PrettyPrinter(opts: PrinterOptions,
     case (pa: PrettyPrintable, _) => pa.printRequiresParentheses(within)
     case (_, None) => false
     case (_, Some(
-      _: Ensuring | _: Assert | _: Require | _: Definition | _: MatchExpr |
-      _: MatchCase | _: Let | _: LetDef | _: IfExpr | _ : CaseClass | _ : Lambda | _ : Choose
+      _: Ensuring | _: Assert | _: Require | _: Definition | _: MatchExpr | _: MatchCase |
+      _: Let | _: LetDef | _: IfExpr | _ : CaseClass | _ : Lambda | _ : Choose | _ : Tuple
     )) => false
     case (ex: StringConcat, Some(_: StringConcat)) => false
     case (b1 @ BinaryMethodCall(_, _, _), Some(b2 @ BinaryMethodCall(_, _, _))) if precedence(b1) > precedence(b2) => false

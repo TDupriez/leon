@@ -1,3 +1,5 @@
+/* Copyright 2009-2016 EPFL, Lausanne */
+
 package leon
 package transformations
 
@@ -22,7 +24,7 @@ class RecursionCountInstrumenter(p: Program, si: SerialInstrumenter) extends Ins
    * Instrument only those functions that are in the same sccs of the root functions
    */
   def functionsToInstrument(): Map[FunDef, List[Instrumentation]] = {
-    val instFunSet = getRootFuncs().flatMap(sccs.apply _)
+    val instFunSet = getRootFuncs().flatMap(sccs.apply _).filter(_.hasBody)
     instFunSet.map(x => (x, List(Rec))).toMap
   }
 

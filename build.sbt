@@ -4,7 +4,9 @@ version := "3.0"
 
 organization := "ch.epfl.lara"
 
-scalaVersion := "2.11.7"
+val scalaVer = "2.11.8"
+
+scalaVersion := scalaVer
 
 scalacOptions ++= Seq(
   "-deprecation",
@@ -28,21 +30,22 @@ if(System.getProperty("sun.arch.data.model") == "64") {
 
 resolvers ++= Seq(
   "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/",
-  "Sonatype OSS Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots"
+  "Sonatype OSS Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots",
+  "Sonatype OSS Releases" at "https://oss.sonatype.org/content/repositories/releases"
 )
 
-val libisabelleVersion = "0.2"
+val libisabelleVer = "0.3.1"
 
 libraryDependencies ++= Seq(
-  "org.scala-lang" % "scala-compiler" % "2.11.7",
+  "org.scala-lang" % "scala-compiler" % scalaVer,
   "org.scalatest" %% "scalatest" % "2.2.4" % "test",
   "com.typesafe.akka" %% "akka-actor" % "2.3.4",
-  "info.hupel" %% "libisabelle" % libisabelleVersion,
-  "info.hupel" %% "libisabelle-setup" % libisabelleVersion,
-  "info.hupel" %% "pide-2015" % libisabelleVersion,
-  "org.slf4j" % "slf4j-nop" % "1.7.13",
+  "info.hupel" %% "libisabelle" % libisabelleVer,
+  "info.hupel" %% "libisabelle-setup" % libisabelleVer,
+  "info.hupel" %% "slf4j-impl-helper" % "0.1",
   "org.ow2.asm" % "asm-all" % "5.0.4",
-  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.6.0-rc2"
+  "com.fasterxml.jackson.module" %% "jackson-module-scala" % "2.6.0-rc2"//,
+  //"com.regblanc" %% "scala-smtlib" % "0.2"
 )
 
 lazy val scriptName = "leon"
@@ -87,13 +90,11 @@ script := {
       s.log.info("Generating '"+f.getName+"' script ("+(if(is64) "64b" else "32b")+")...")
     }
     val paths = (res.getAbsolutePath +: out.getAbsolutePath +: cps.map(_.data.absolutePath)).mkString(System.getProperty("path.separator"))
-    val base = baseDirectory.value.getAbsolutePath
     IO.write(f, s"""|#!/bin/bash --posix
                     |
                     |SCALACLASSPATH="$paths"
-                    |BASEDIRECTORY="$base"
                     |
-                    |java -Xmx2G -Xms512M -Xss64M -classpath "$${SCALACLASSPATH}" -Dleon.base="$${BASEDIRECTORY}" -Dscala.usejavacp=false scala.tools.nsc.MainGenericRunner -classpath "$${SCALACLASSPATH}" leon.Main $$@ 2>&1 | tee -i last.log
+                    |java -Xmx2G -Xms512M -Xss64M -classpath "$${SCALACLASSPATH}" -Dscala.usejavacp=false scala.tools.nsc.MainGenericRunner -classpath "$${SCALACLASSPATH}" leon.Main $$@ 2>&1 | tee -i last.log
                     |""".stripMargin)
     f.setExecutable(true)
   } catch {
@@ -169,11 +170,12 @@ parallelExecution in GenCTest := false
 def ghProject(repo: String, version: String) = RootProject(uri(s"${repo}#${version}"))
 
 lazy val bonsai      = ghProject("git://github.com/colder/bonsai.git",     "10eaaee4ea0ff6567f4f866922cb871bae2da0ac")
-lazy val scalaSmtLib = ghProject("git://github.com/regb/scala-smtlib.git", "372bb14d0c84953acc17f9a7e1592087adb0a3e1")
+lazy val scalaSmtlib = ghProject("git://github.com/regb/scala-smtlib.git", "57834acfe2e3bc36862be52e4d99829bb8ff0ca7")
 
 lazy val root = (project in file(".")).
   configs(RegressionTest, IsabelleTest, GenCTest, IntegrTest).
-  dependsOn(bonsai, scalaSmtLib).
+  dependsOn(bonsai).
+  dependsOn(scalaSmtlib).
   settings(inConfig(RegressionTest)(Defaults.testTasks ++ testSettings): _*).
   settings(inConfig(IntegrTest)(Defaults.testTasks ++ testSettings): _*).
   settings(inConfig(IsabelleTest)(Defaults.testTasks ++ testSettings): _*).

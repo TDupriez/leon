@@ -1,6 +1,7 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
-package leon.purescala
+package leon
+package purescala
 
 import Definitions._
 import Expressions._
@@ -8,6 +9,8 @@ import Common.Identifier
 import ExprOps.{preMap, functionCallsOf}
 import leon.purescala.Types.AbstractClassType
 import leon.purescala.Types._
+
+import scala.collection.mutable.{Map => MutableMap}
 
 object DefOps {
 
@@ -93,6 +96,29 @@ object DefOps {
     }
   }
 
+  private def stripPrefix(off: List[String], from: List[String]): List[String] = {
+    val commonPrefix = (off zip from).takeWhile(p => p._1 == p._2)
+
+    val res = off.drop(commonPrefix.size)
+
+    if (res.isEmpty) {
+      if (off.isEmpty) List()
+      else List(off.last)
+    } else {
+      res
+    }
+  }
+  
+  def simplifyPath(namesOf: List[String], from: Definition, useUniqueIds: Boolean)(implicit pgm: Program) = {
+    val pathFrom = pathFromRoot(from).dropWhile(_.isInstanceOf[Program])
+    
+    val namesFrom = pathToNames(pathFrom, useUniqueIds)
+    
+    val names: Set[List[String]] = Set(namesOf, stripPrefix(namesOf, namesFrom)) ++
+      getNameUnderImports(pathFrom, namesOf)
+    
+    names.toSeq.minBy(_.size).mkString(".")
+  }
 
   def fullNameFrom(of: Definition, from: Definition, useUniqueIds: Boolean)(implicit pgm: Program): String = {
     val pathFrom = pathFromRoot(from).dropWhile(_.isInstanceOf[Program])
@@ -100,30 +126,22 @@ object DefOps {
     val namesFrom = pathToNames(pathFrom, useUniqueIds)
     val namesOf   = pathToNames(pathFromRoot(of), useUniqueIds)
 
-    def stripPrefix(off: List[String], from: List[String]) = {
-      val commonPrefix = (off zip from).takeWhile(p => p._1 == p._2)
-
-      val res = off.drop(commonPrefix.size)
-
-      if (res.isEmpty) {
-        if (off.isEmpty) List()
-        else List(off.last)
-      } else {
-        res
-      }
-    }
-
     val sp = stripPrefix(namesOf, namesFrom)
     if (sp.isEmpty) return "**** " + of.id.uniqueName
-    var names: Set[List[String]] = Set(namesOf, stripPrefix(namesOf, namesFrom))
+    val names: Set[List[String]] =
+      Set(namesOf, stripPrefix(namesOf, namesFrom)) ++ getNameUnderImports(pathFrom, namesOf)
 
-    pathFrom match {
+    names.toSeq.minBy(_.size).mkString(".")
+  }
+  
+  private def getNameUnderImports(pathFrom: List[Definition], namesOf: List[String]): Seq[List[String]] = {
+    (pathFrom match {
       case (u: UnitDef) :: _ =>
         val imports = u.imports.map {
           case Import(path, true) => path
           case Import(path, false) => path.init
         }.toList
-
+  
         def stripImport(of: List[String], imp: List[String]): Option[List[String]] = {
           if (of.startsWith(imp)) {
             Some(stripPrefix(of, imp))
@@ -131,15 +149,13 @@ object DefOps {
             None
           }
         }
-
-        for (imp <- imports) {
-          names ++= stripImport(namesOf, imp)
-        }
-
+  
+        for {imp <- imports
+             strippedImport <- stripImport(namesOf, imp)    
+        } yield strippedImport
       case _ =>
-    }
-
-    names.toSeq.minBy(_.size).mkString(".")
+        Nil
+    })
   }
 
   def pathToNames(path: List[Definition], useUniqueIds: Boolean): List[String] = {
@@ -271,13 +287,62 @@ object DefOps {
     }
   }
 
+  def replaceDefsInProgram(p: Program)(fdMap: Map[FunDef, FunDef] = Map.empty,
+                                       cdMap: Map[ClassDef, ClassDef] = Map.empty): Program = {
+    p.copy(units = for (u <- p.units) yield {
+      u.copy(defs = u.defs.map {
+        case m : ModuleDef =>
+          m.copy(defs = for (df <- m.defs) yield {
+            df match {
+              case cd : ClassDef => cdMap.getOrElse(cd, cd)
+              case fd : FunDef => fdMap.getOrElse(fd, fd)
+              case d => d
+            }
+        })
+        case cd: ClassDef => cdMap.getOrElse(cd, cd)
+        case d => d
+      })
+    })
+  }
+
+  def replaceDefs(p: Program)(fdMapF: FunDef => Option[FunDef],
+                              cdMapF: ClassDef => Option[ClassDef],
+                              fiMapF: (FunctionInvocation, FunDef) => Option[Expr] = defaultFiMap,
+                              ciMapF: (CaseClass, CaseClassType) => Option[Expr] = defaultCdMap)
+                              : (Program, Map[Identifier, Identifier], Map[FunDef, FunDef], Map[ClassDef, ClassDef]) = {
+
+    val idMap = new utils.Bijection[Identifier, Identifier]
+    val cdMap = new utils.Bijection[ClassDef  , ClassDef  ]
+    val fdMap = new utils.Bijection[FunDef    , FunDef    ]
+
+    val transformer = new DefinitionTransformer(idMap, fdMap, cdMap) {
+      override def transform(expr: Expr)(implicit bindings: Map[Identifier, Identifier]): Expr = expr match {
+        case fi @ FunctionInvocation(TypedFunDef(fd, tps), args) =>
+          val nfi = fiMapF(fi, transform(fd)) getOrElse expr
+          super.transform(nfi)
+        case cc @ CaseClass(cct, args) =>
+          val ncc = ciMapF(cc, transform(cct).asInstanceOf[CaseClassType]) getOrElse expr
+          super.transform(ncc)
+        case _ => super.transform(expr)
+      }
+
+      override def transformFunDef(fd: FunDef): Option[FunDef] = fdMapF(fd)
+      override def transformClassDef(cd: ClassDef): Option[ClassDef] = cdMapF(cd)
+    }
+
+    val cdsMap = p.definedClasses.map(cd => cd -> transformer.transform(cd)).toMap
+    val fdsMap = p.definedFunctions.map(fd => fd -> transformer.transform(fd)).toMap
+    val newP = replaceDefsInProgram(p)(fdsMap, cdsMap)
+    (newP, idMap.toMap, fdsMap, cdsMap)
+  }
+
   private def defaultFiMap(fi: FunctionInvocation, nfd: FunDef): Option[Expr] = (fi, nfd) match {
     case (FunctionInvocation(old, args), newfd) if old.fd != newfd =>
       Some(FunctionInvocation(newfd.typed(old.tps), args))
     case _ =>
       None
   }
-  
+
   /** Clones the given program by replacing some functions by other functions.
     * 
     * @param p The original program
@@ -287,95 +352,30 @@ object DefOps {
     * @return the new program with a map from the old functions to the new functions */
   def replaceFunDefs(p: Program)(fdMapF: FunDef => Option[FunDef],
                                  fiMapF: (FunctionInvocation, FunDef) => Option[Expr] = defaultFiMap)
-                                 : (Program, Map[FunDef, FunDef])= {
-
-    var fdMapFCache = Map[FunDef, Option[FunDef]]() // Original fdMapF cache
-    var fdMapCache = Map[FunDef, Option[FunDef]]() // Final replacement.
-    def fdMapFCached(fd: FunDef): Option[FunDef] = {
-      fdMapFCache.get(fd) match {
-        case Some(e) => e
-        case None =>
-          val new_fd = fdMapF(fd)
-          fdMapFCache += fd -> new_fd
-          new_fd
-      }
-    }
-    
-    def duplicateParents(fd: FunDef): Unit = {
-      fdMapCache.get(fd) match {
-        case None =>
-          fdMapCache += fd -> fdMapFCached(fd).orElse(Some(fd.duplicate()))
-          for(fp <- p.callGraph.callers(fd)) {
-            duplicateParents(fp)
-          }
-        case _ =>
-      }
-    }
-    
-    def fdMap(fd: FunDef): FunDef = {
-      fdMapCache.get(fd) match {
-        case Some(Some(e)) => e
-        case Some(None) => fd
-        case None =>
-          if(fdMapFCached(fd).isDefined || p.callGraph.transitiveCallees(fd).exists(fd => fdMapFCached(fd).isDefined))  {
-            duplicateParents(fd)
-          } else { // Verify that for all 
-            fdMapCache += fd -> None
-          }
-          fdMapCache(fd).getOrElse(fd)
-      }
-    }
-
-    val newP = p.copy(units = for (u <- p.units) yield {
-      u.copy(
-        defs = u.defs.map {
-          case m : ModuleDef =>
-            m.copy(defs = for (df <- m.defs) yield {
-              df match {
-                case f : FunDef => fdMap(f)
-                case d => d
-              }
-          })
-          case d => d
-        }
-      )
-    })
-    
-    for(fd <- newP.definedFunctions) {
-      if(ExprOps.exists{
-        case FunctionInvocation(TypedFunDef(fd, targs), fargs) => fdMapCache contains fd
-        case MatchExpr(_, cases) => cases.exists(c => PatternOps.exists{
-          case UnapplyPattern(optId, TypedFunDef(fd, tps), subp) => fdMapCache contains fd
-          case _ => false
-        }(c.pattern))
-        case _ => false
-        }(fd.fullBody)) {
-        fd.fullBody = replaceFunCalls(fd.fullBody, fdMap, fiMapF)
-      }
-    }
-    (newP, fdMapCache.collect{ case (ofd, Some(nfd)) => ofd -> nfd })
+                                 : (Program, Map[Identifier, Identifier], Map[FunDef, FunDef], Map[ClassDef, ClassDef]) = {
+    replaceDefs(p)(fdMapF, cd => None, fiMapF)
   }
 
   def replaceFunCalls(e: Expr, fdMapF: FunDef => FunDef, fiMapF: (FunctionInvocation, FunDef) => Option[Expr] = defaultFiMap): Expr = {
     preMap {
-      case MatchExpr(scrut, cases) =>
+      case me @ MatchExpr(scrut, cases) =>
         Some(MatchExpr(scrut, cases.map(matchcase => matchcase match {
-          case MatchCase(pattern, guard, rhs) => MatchCase(replaceFunCalls(pattern, fdMapF), guard, rhs)
-        })))
+          case mc @ MatchCase(pattern, guard, rhs) => MatchCase(replaceFunCalls(pattern, fdMapF), guard, rhs).copiedFrom(mc)
+        })).copiedFrom(me))
       case fi @ FunctionInvocation(TypedFunDef(fd, tps), args) =>
-        fiMapF(fi, fdMapF(fd)).map(_.setPos(fi))
+        fiMapF(fi, fdMapF(fd)).map(_.copiedFrom(fi))
       case _ =>
         None
     }(e)
   }
-  
+
   def replaceFunCalls(p: Pattern, fdMapF: FunDef => FunDef): Pattern = PatternOps.preMap{
     case UnapplyPattern(optId, TypedFunDef(fd, tps), subp) => Some(UnapplyPattern(optId, TypedFunDef(fdMapF(fd), tps), subp))
     case _ => None
   }(p)
 
   private def defaultCdMap(cc: CaseClass, ccd: CaseClassType): Option[Expr] = (cc, ccd) match {
-    case (CaseClass(old, args), newCcd) if old.classDef != newCcd =>
+    case (CaseClass(old, args), newCcd) if old.classDef != newCcd.classDef =>
       Some(CaseClass(newCcd, args))
     case _ =>
       None
@@ -388,7 +388,7 @@ object DefOps {
     * @param ciMapF Given a previous case class invocation and its new case class definition, returns the expression to use.
     *               By default it is the case class construction using the new case class definition.
     * @return the new program with a map from the old case classes to the new case classes, with maps concerning identifiers and function definitions. */
-  def replaceCaseClassDefs(p: Program)(_cdMapF: CaseClassDef => Option[Option[AbstractClassType] => CaseClassDef],
+  def replaceCaseClassDefs(p: Program)(cdMapFOriginal: CaseClassDef => Option[Option[AbstractClassType] => CaseClassDef],
                                        ciMapF: (CaseClass, CaseClassType) => Option[Expr] = defaultCdMap)
                                        : (Program, Map[ClassDef, ClassDef], Map[Identifier, Identifier], Map[FunDef, FunDef]) = {
     var cdMapFCache = Map[CaseClassDef, Option[Option[AbstractClassType] => CaseClassDef]]()
@@ -396,30 +396,32 @@ object DefOps {
     var idMapCache = Map[Identifier, Identifier]()
     var fdMapFCache = Map[FunDef, Option[FunDef]]()
     var fdMapCache = Map[FunDef, Option[FunDef]]()
+
     def cdMapF(cd: ClassDef): Option[Option[AbstractClassType] => CaseClassDef] = {
       cd match {
         case ccd: CaseClassDef =>
           cdMapFCache.getOrElse(ccd, {
-            val new_cd_potential = _cdMapF(ccd)
+            val new_cd_potential = cdMapFOriginal(ccd)
             cdMapFCache += ccd -> new_cd_potential
             new_cd_potential
           })
         case acd: AbstractClassDef => None
       }
     }
+
     def tpMap[T <: TypeTree](tt: T): T = TypeOps.postMap{
       case AbstractClassType(asd, targs) => Some(AbstractClassType(cdMap(asd).asInstanceOf[AbstractClassDef], targs))
       case CaseClassType(ccd, targs) => Some(CaseClassType(cdMap(ccd).asInstanceOf[CaseClassDef], targs))
       case e => None
     }(tt).asInstanceOf[T]
-    
+
     def duplicateClassDef(cd: ClassDef): ClassDef = {
       cdMapCache.get(cd) match {
         case Some(new_cd) => 
           new_cd.get // None would have meant that this class would never be duplicated, which is not possible.
         case None =>
           val parent = cd.parent.map(duplicateAbstractClassType)
-          val new_cd = cdMapF(cd).map(f => f(parent)).getOrElse{
+          val new_cd = cdMapF(cd).map(f => f(parent)).getOrElse {
             cd match {
               case acd:AbstractClassDef => acd.duplicate(parent = parent)
               case ccd:CaseClassDef => 
@@ -430,7 +432,7 @@ object DefOps {
           new_cd
       }
     }
-    
+
     def duplicateAbstractClassType(act: AbstractClassType): AbstractClassType = {
       TypeOps.postMap{
         case AbstractClassType(acd, tps) => Some(AbstractClassType(duplicateClassDef(acd).asInstanceOf[AbstractClassDef], tps))
@@ -438,7 +440,7 @@ object DefOps {
         case _ => None
       }(act).asInstanceOf[AbstractClassType]
     }
-    
+
     // If at least one descendants or known case class needs conversion, then all the hierarchy will be converted.
     // If something extends List[A] and A is modified, then the first something should be modified.
     def dependencies(s: ClassDef): Set[ClassDef] = {
@@ -448,7 +450,7 @@ object DefOps {
         case _ => Set()
       }(p))))(Set(s))
     }
-    
+
     def cdMap(cd: ClassDef): ClassDef = {
       cdMapCache.get(cd) match {
         case Some(Some(new_cd)) => new_cd
@@ -462,6 +464,7 @@ object DefOps {
           cdMapCache(cd).getOrElse(cd)
       }
     }
+
     def idMap(id: Identifier): Identifier = {
       if (!(idMapCache contains id)) {
         val new_id = id.duplicate(tpe = tpMap(id.getType))
@@ -469,11 +472,11 @@ object DefOps {
       }
       idMapCache(id)
     }
-    
+
     def idHasToChange(id: Identifier): Boolean = {
       typeHasToChange(id.getType)
     }
-    
+
     def typeHasToChange(tp: TypeTree): Boolean = {
       TypeOps.exists{
         case AbstractClassType(acd, _) => cdMap(acd) != acd
@@ -481,7 +484,7 @@ object DefOps {
         case _ => false
       }(tp)
     }
-    
+
     def patternHasToChange(p: Pattern): Boolean = {
       PatternOps.exists {
         case CaseClassPattern(optId, cct, sub) => optId.exists(idHasToChange) || typeHasToChange(cct)
@@ -490,7 +493,7 @@ object DefOps {
         case e => false
       } (p)
     }
-    
+
     def exprHasToChange(e: Expr): Boolean = {
       ExprOps.exists{
         case Let(id, expr, body) => idHasToChange(id)
@@ -510,11 +513,11 @@ object DefOps {
           false
       }(e)
     }
-    
+
     def funDefHasToChange(fd: FunDef): Boolean = {
       exprHasToChange(fd.fullBody) || fd.params.exists(vid => typeHasToChange(vid.id.getType)) || typeHasToChange(fd.returnType)
     }
-    
+
     def funHasToChange(fd: FunDef): Boolean = {
       funDefHasToChange(fd) || p.callGraph.transitiveCallees(fd).exists(fd =>
         fdMapFCache.get(fd) match {
@@ -523,7 +526,7 @@ object DefOps {
           case None => funDefHasToChange(fd)
         })
     }
-    
+
     def fdMapFCached(fd: FunDef): Option[FunDef] = {
       fdMapFCache.get(fd) match {
         case Some(e) => e
@@ -537,7 +540,7 @@ object DefOps {
           new_fd
       }
     }
-    
+
     def duplicateParents(fd: FunDef): Unit = {
       fdMapCache.get(fd) match {
         case None =>
@@ -548,7 +551,7 @@ object DefOps {
         case _ =>
       }
     }
-    
+
     def fdMap(fd: FunDef): FunDef = {
       fdMapCache.get(fd) match {
         case Some(Some(e)) => e
@@ -562,7 +565,7 @@ object DefOps {
           fdMapCache(fd).getOrElse(fd)
       }
     }
-    
+
     val newP = p.copy(units = for (u <- p.units) yield {
       u.copy(
         defs = u.defs.map {
@@ -578,6 +581,7 @@ object DefOps {
         }
       )
     })
+
     def replaceClassDefUse(e: Pattern): Pattern = PatternOps.postMap{
       case CaseClassPattern(optId, cct, sub) => Some(CaseClassPattern(optId.map(idMap), tpMap[CaseClassType](cct), sub))
       case InstanceOfPattern(optId, cct) => Some(InstanceOfPattern(optId.map(idMap), tpMap[ClassType](cct)))
@@ -585,7 +589,7 @@ object DefOps {
       case Extractors.Pattern(Some(id), subp, builder) => Some(builder(Some(idMap(id)), subp))
       case e => None
     }(e)
-    
+
     def replaceClassDefsUse(e: Expr): Expr = {
       ExprOps.postMap {
         case Let(id, expr, body) => Some(Let(idMap(id), expr, body))
@@ -610,19 +614,23 @@ object DefOps {
           None
       }(e)
     }
-    
-    for(fd <- newP.definedFunctions) {
-      if(fdMapCache.getOrElse(fd, None).isDefined) {
+
+    for (fd <- newP.definedFunctions) {
+      if (fdMapCache.getOrElse(fd, None).isDefined) {
         fd.fullBody = replaceClassDefsUse(fd.fullBody)
       }
     }
+
+    // make sure classDef invariants are correctly assigned to transformed classes
+    for ((cd, optNew) <- cdMapCache; newCd <- optNew; inv <- newCd.invariant) {
+      newCd.setInvariant(fdMap(inv))
+    }
+
     (newP,
         cdMapCache.collect{case (cd, Some(new_cd)) => cd -> new_cd},
         idMapCache,
         fdMapCache.collect{case (cd, Some(new_cd)) => cd -> new_cd })
   }
-  
-  
 
   def addDefs(p: Program, cds: Traversable[Definition], after: Definition): Program = {
     var found = false
@@ -696,6 +704,29 @@ object DefOps {
       (tfd: TypedFunDef) => functionCallsOf(tfd.fullBody) map { _.tfd },
       limit
     )
+  }
+
+  def augmentCaseClassFields(extras: Seq[(CaseClassDef, Seq[(ValDef, Expr)])])
+                            (program: Program) = {
+
+    def updateBody(body: Expr): Expr = {
+      preMap({
+        case CaseClass(ct, args) => extras.find(p => p._1 == ct.classDef).map{
+          case (ccd, extraFields) =>
+            CaseClass(CaseClassType(ccd, ct.tps), args ++ extraFields.map{ case (_, v) => v })
+        }
+        case _ => None
+      })(body)
+    }
+
+    extras.foreach{ case (ccd, extraFields) => ccd.setFields(ccd.fields ++ extraFields.map(_._1)) }
+    for {
+      fd <- program.definedFunctions
+    } {
+      fd.body = fd.body.map(body => updateBody(body))
+      fd.precondition = fd.precondition.map(pre => updateBody(pre))
+      fd.postcondition = fd.postcondition.map(post => updateBody(post))
+    }
   }
 
 }

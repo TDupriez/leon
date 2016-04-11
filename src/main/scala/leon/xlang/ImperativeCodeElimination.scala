@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package xlang
@@ -21,7 +21,7 @@ object ImperativeCodeElimination extends UnitPhase[Program] {
   def apply(ctx: LeonContext, pgm: Program): Unit = {
     for {
       fd <- pgm.definedFunctions
-      body <- fd.body
+      body <- fd.body if exists(requireRewriting)(body)
     } {
       val (res, scope, _) = toFunction(body)(State(fd, Set(), Map()))
       fd.body = Some(scope(res))
@@ -155,7 +155,7 @@ object ImperativeCodeElimination extends UnitPhase[Program] {
           val (rVal, rScope, rFun) = toFunction(e)
           val scope = (body: Expr) => {
             rVal match {
-              case FunctionInvocation(tfd, args) if tfd.hasPrecondition =>
+              case FunctionInvocation(tfd, args) =>
                 rScope(replaceNames(rFun, Let(FreshIdentifier("tmp", tfd.returnType), rVal, accScope(body))))
               case _ =>
                 rScope(replaceNames(rFun, accScope(body)))
@@ -304,6 +304,11 @@ object ImperativeCodeElimination extends UnitPhase[Program] {
           }
         }
 
+      //TODO: handle vars in scope, just like LetDef
+      case ld@Lambda(params, body) =>
+        val (bodyVal, bodyScope, bodyFun) = toFunction(body)
+        (Lambda(params, bodyScope(bodyVal)).copiedFrom(ld), (e: Expr) => e, Map())
+
       case c @ Choose(b) =>
         //Recall that Choose cannot mutate variables from the scope
         (c, (b2: Expr) => b2, Map())
@@ -349,6 +354,14 @@ object ImperativeCodeElimination extends UnitPhase[Program] {
       case Block(_, res) => Some(res)
       case _ => None
     })(expr)
+  }
+
+  private def requireRewriting(expr: Expr) = expr match {
+    case (e: Block) => true
+    case (e: Assignment) => true
+    case (e: While) => true
+    case (e: LetVar) => true
+    case _ => false
   }
 
 }

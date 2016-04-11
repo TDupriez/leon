@@ -1,4 +1,4 @@
-/* Copyright 2009-2015 EPFL, Lausanne */
+/* Copyright 2009-2016 EPFL, Lausanne */
 
 package leon
 package purescala
@@ -7,7 +7,6 @@ import Expressions._
 import Common._
 import Types._
 import Constructors._
-import Definitions.{Program, AbstractClassDef, CaseClassDef}
 
 object Extractors {
 
@@ -135,6 +134,8 @@ object Extractors {
         Some(Seq(t1, t2), (es: Seq[Expr]) => RealDivision(es(0), es(1)))
       case StringConcat(t1, t2) =>
         Some(Seq(t1, t2), (es: Seq[Expr]) => StringConcat(es(0), es(1)))
+      case SetAdd(t1, t2) =>
+        Some(Seq(t1, t2), (es: Seq[Expr]) => SetAdd(es(0), es(1)))
       case ElementOfSet(t1, t2) =>
         Some(Seq(t1, t2), (es: Seq[Expr]) => ElementOfSet(es(0), es(1)))
       case SubsetOf(t1, t2) =>
@@ -145,6 +146,16 @@ object Extractors {
         Some(Seq(t1, t2), (es: Seq[Expr]) => SetUnion(es(0), es(1)))
       case SetDifference(t1, t2) =>
         Some(Seq(t1, t2), (es: Seq[Expr]) => SetDifference(es(0), es(1)))
+      case BagAdd(e1, e2) =>
+        Some(Seq(e1, e2), (es: Seq[Expr]) => BagAdd(es(0), es(1)))
+      case MultiplicityInBag(e1, e2) =>
+        Some(Seq(e1, e2), (es: Seq[Expr]) => MultiplicityInBag(es(0), es(1)))
+      case BagIntersection(e1, e2) =>
+        Some(Seq(e1, e2), (es: Seq[Expr]) => BagIntersection(es(0), es(1)))
+      case BagUnion(e1, e2) =>
+        Some(Seq(e1, e2), (es: Seq[Expr]) => BagUnion(es(0), es(1)))
+      case BagDifference(e1, e2) =>
+        Some(Seq(e1, e2), (es: Seq[Expr]) => BagDifference(es(0), es(1)))
       case mg @ MapApply(t1, t2) =>
         Some(Seq(t1, t2), (es: Seq[Expr]) => MapApply(es(0), es(1)))
       case MapUnion(t1, t2) =>
@@ -174,11 +185,23 @@ object Extractors {
       case SubString(t1, a, b) => Some((t1::a::b::Nil, es => SubString(es(0), es(1), es(2))))
       case FiniteSet(els, base) =>
         Some((els.toSeq, els => FiniteSet(els.toSet, base)))
+      case FiniteBag(els, base) =>
+        val subArgs = els.flatMap { case (k, v) => Seq(k, v) }.toSeq
+        val builder = (as: Seq[Expr]) => {
+          def rec(kvs: Seq[Expr]): Map[Expr, Expr] = kvs match {
+            case Seq(k, v, t @ _*) =>
+              Map(k -> v) ++ rec(t)
+            case Seq() => Map()
+            case _ => sys.error("odd number of key/value expressions")
+          }
+          FiniteBag(rec(as), base)
+        }
+        Some((subArgs, builder))
       case FiniteMap(args, f, t) => {
         val subArgs = args.flatMap { case (k, v) => Seq(k, v) }.toSeq
         val builder = (as: Seq[Expr]) => {
           def rec(kvs: Seq[Expr]): Map[Expr, Expr] = kvs match {
-            case Seq(k, v, t@_*) =>
+            case Seq(k, v, t @ _*) =>
               Map(k -> v) ++ rec(t)
             case Seq() => Map()
             case _ => sys.error("odd number of key/value expressions")
@@ -210,7 +233,7 @@ object Extractors {
         Seq(cond, thenn, elze),
         { case Seq(c, t, e) => IfExpr(c, t, e) }
       ))
-      case MatchExpr(scrut, cases) => Some((
+      case m@MatchExpr(scrut, cases) => Some((
         scrut +: cases.flatMap { _.expressions },
         (es: Seq[Expr]) => {
           var i = 1
@@ -219,7 +242,7 @@ object Extractors {
             case GuardedCase(b, _, _) => i += 2; GuardedCase(b, es(i - 2), es(i - 1))
           }
 
-          matchExpr(es.head, newcases)
+          matchExpr(es.head, newcases).copiedFrom(m)
         }
       ))
       case Passes(in, out, cases) => Some((
@@ -382,5 +405,4 @@ object Extractors {
       }
     }
   }
-
 }
