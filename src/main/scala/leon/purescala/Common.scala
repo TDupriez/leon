@@ -26,7 +26,8 @@ object Common {
       ScalaPrinter(this, ctx, pgm)
     }
 
-    override def toString = asString(LeonContext.printNames)
+//    For the ImplicitWebProgramming project : Commenting the following line allows the printing of Expr to be the default case class printing, it's ugly but at least the structure is there.
+//    override def toString = asString(LeonContext.printNames)
   }
 
   /** Represents a unique symbol in Leon.
