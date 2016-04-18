@@ -10,11 +10,14 @@ import leon.annotation.{ignore, extern}
   */
 sealed trait WebElement {
   //WebElementID
-  var weid = 0
+  var weid: Int = 0
   val sons: leon.collection.List[WebElement]
-  println("I'm being created")
 //  val id : WebElementID = WebElementIDProvider.generateFreshId()
 }
+
+//abstract class WebElement(implicit id: WebElemID) {
+//  val sons: leon.collection.List[WebElement]
+//}
 
 //case class TestWebElement1(sons: leon.collection.List[WebElement]) extends WebElement
 //case class TestWebElement2(oi: Int) extends WebElement
@@ -36,3 +39,7 @@ case class Paragraph(/*id: Int,*/ text: String) extends WebElement {override val
 //    counter = 0
 //  }
 //}
+
+//class WebElemID(id: Int)
+
+case class WebElementWithID(we: WebElement, id: Int) extends WebElement{override val sons = leon.collection.List[WebElement]()}

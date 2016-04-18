@@ -5,3 +5,5 @@ package leon.webDSL.webDescription
 
 
 case class WebPage(webPageAttributes: leon.collection.List[WebPageAttribute], sons: leon.collection.List[WebElement])
+
+case class WebPageWithIDedWebElements(webPageAttributes: leon.collection.List[WebPageAttribute], sons: leon.collection.List[WebElementWithID])
