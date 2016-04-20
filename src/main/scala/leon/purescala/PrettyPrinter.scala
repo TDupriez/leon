@@ -633,7 +633,9 @@ class PrettyPrinter(opts: PrinterOptions,
   protected def noBracesSub(e: Expr): Seq[Expr] = e match {
     case Assert(_, _, bd) => Seq(bd)
     case Let(_, _, bd) => Seq(bd)
+    case xlang.Expressions.LetVar(_, _, bd) => Seq(bd)
     case LetDef(_, bd) => Seq(bd)
+    case LetPattern(_, _, bd) => Seq(bd)
     case Require(_, bd) => Seq(bd)
     case IfExpr(_, t, e) => Seq(t, e) // if-else always has braces anyway
     case Ensuring(bd, pred) => Seq(bd, pred)
@@ -645,6 +647,10 @@ class PrettyPrinter(opts: PrinterOptions,
     case (e: Expr, Some(within: Expr)) if noBracesSub(within) contains e => false
     case (_: Expr, Some(_: MatchCase)) => false
     case (_: LetDef, Some(_: LetDef)) => false
+    case (_: Expr, Some(_: xlang.Expressions.Block)) => false
+    case (_: xlang.Expressions.Block, Some(_: xlang.Expressions.While)) => false
+    case (_: xlang.Expressions.Block, Some(_: FunDef)) => false
+    case (_: xlang.Expressions.Block, Some(_: LetDef)) => false
     case (e: Expr, Some(_)) => true
     case _ => false
   }
@@ -669,6 +675,7 @@ class PrettyPrinter(opts: PrinterOptions,
       _: Ensuring | _: Assert | _: Require | _: Definition | _: MatchExpr | _: MatchCase |
       _: Let | _: LetDef | _: IfExpr | _ : CaseClass | _ : Lambda | _ : Choose | _ : Tuple
     )) => false
+    case (_:Pattern, _) => false
     case (ex: StringConcat, Some(_: StringConcat)) => false
     case (b1 @ BinaryMethodCall(_, _, _), Some(b2 @ BinaryMethodCall(_, _, _))) if precedence(b1) > precedence(b2) => false
     case (BinaryMethodCall(_, _, _), Some(_: FunctionInvocation)) => true

@@ -7,13 +7,10 @@ import Types._
 import Definitions._
 import Common._
 import Expressions._
-import Extractors._
-import Constructors._
 
-object TypeOps extends { val Deconstructor = NAryType } with SubTreeOps[TypeTree] {
-  def typeDepth(t: TypeTree): Int = t match {
-    case NAryType(tps, builder) => 1 + (0 +: (tps map typeDepth)).max
-  }
+object TypeOps extends GenTreeOps[TypeTree] {
+
+  val Deconstructor = NAryType
 
   def typeParamsOf(expr: Expr): Set[TypeParameter] = {
     ExprOps.collect(e => typeParamsOf(e.getType))(expr)
@@ -252,4 +249,31 @@ object TypeOps extends { val Deconstructor = NAryType } with SubTreeOps[TypeTree
       transformer.transform(e)(ids)
     }
   }
+
+  def typeCardinality(tp: TypeTree): Option[Int] = tp match {
+    case Untyped => Some(0)
+    case BooleanType => Some(2)
+    case UnitType => Some(1)
+    case SetType(base) =>
+      typeCardinality(base).map(b => Math.pow(2, b).toInt)
+    case FunctionType(from, to) =>
+      val t = typeCardinality(to).getOrElse(return None)
+      val f = from.map(typeCardinality).map(_.getOrElse(return None)).product
+      Some(Math.pow(t, f).toInt)
+    case MapType(from, to) =>
+      for {
+        t <- typeCardinality(to)
+        f <- typeCardinality(from)
+      } yield {
+        Math.pow(t + 1, f).toInt
+      }
+    case cct: CaseClassType =>
+      Some(cct.fields.map { field =>
+        typeCardinality(field.getType).getOrElse(return None)
+      }.product)
+    case act: AbstractClassType =>
+      Some(act.knownCCDescendants.map(typeCardinality).map(_.getOrElse(return None)).sum)
+    case _ => None
+  }
+
 }

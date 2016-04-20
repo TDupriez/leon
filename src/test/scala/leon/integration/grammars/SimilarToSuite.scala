@@ -5,6 +5,7 @@ package leon.integration.grammars
 import leon._
 import leon.test._
 import leon.test.helpers._
+import leon.purescala.Path
 import leon.purescala.Common._
 import leon.purescala.Definitions._
 import leon.purescala.Constructors._
@@ -138,19 +139,13 @@ class SimilarToSuite extends LeonTestSuiteWithProgram with ExpressionsDSL {
     for ((vs, from, exp) <- tests) {
       // SimilarTo(<from>) should produce <exp>
 
-      val sctx = new SynthesisContext(fix._1, SynthesisSettings(), ofd.getOrElse(fix._2.definedFunctions.head), fix._2)
-      val p = Problem(vs.map(_.id), BooleanLiteral(true), BooleanLiteral(true), BooleanLiteral(true), Nil, ExamplesBank.empty)
-
       val g = OneOf(vs)
       val enum = new MemoizedEnumerator[Label, Expr, ProductionRule[Label, Expr]](g.getProductions)
-      val exprs = enum.iterator(Label(exp.getType).withAspect(SimilarTo(from)))
+      val exprs = enum.iterator(Label(exp.getType).withAspect(SimilarTo(Seq(from))))
 
       //println(s"SimilarTo(${from.asString}):")
 
-      if (!(exprs.exists { e => 
-        //println(s" - ${e.asString}")
-        e == exp
-      })) {
+      if (!exprs.contains(exp)) {
         info("Productions: ")
         g.printProductions(info(_))
 
@@ -233,8 +228,8 @@ class SimilarToSuite extends LeonTestSuiteWithProgram with ExpressionsDSL {
       merge(Node(v1, Leaf(), Leaf()), h1)
       ),
       (List(h1, h2),
-       GreaterThan(rank(h1), Plus(rank(h2), bi(1))),
-       GreaterThan(rank(h1), rank(h2))
+       GreaterThan(rank(h1), Plus(rank(h2), bi(42))),
+       GreaterThan(rank(h1), Minus(Plus(rank(h2), bi(42)), bi(1)))
       )
     )
 

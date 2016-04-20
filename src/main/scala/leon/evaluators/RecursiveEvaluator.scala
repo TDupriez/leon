@@ -107,6 +107,24 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
          case _ => throw EvalError(typeErrorMsg(input, StringType))
        }
 
+    case FunctionInvocation(TypedFunDef(fd, Seq(ta, tb)), Seq(mp, pre, inkv, betweenkv, post, fk, fv)) if fd == program.library.mapMkString.get =>
+      val pre_str = e(pre) match { case StringLiteral(s) => s case _ => throw EvalError(typeErrorMsg(pre, StringType)) }
+      val inkv_str = e(inkv) match { case StringLiteral(s) => s case _ => throw EvalError(typeErrorMsg(inkv, StringType)) }
+      val post_str = e(post) match { case StringLiteral(s) => s case _ => throw EvalError(typeErrorMsg(post, StringType)) }
+      val betweenkv_str = e(betweenkv) match { case StringLiteral(s) => s case _ => throw EvalError(typeErrorMsg(betweenkv, StringType)) }
+      val (mp_map, keyType, valueType) = e(mp) match { case FiniteMap(theMap, keyType, valueType) => (theMap, keyType, valueType) case _ => throw EvalError(typeErrorMsg(mp, MapType(ta, tb))) }
+      
+      val res = pre_str + mp_map.map{ case (k, v) =>
+        (e(application(fk, Seq(k))) match { case StringLiteral(s) => s case _ => throw EvalError(typeErrorMsg(k, StringType)) }) +
+        inkv_str +
+        (v match {
+          case CaseClass(some, Seq(v)) if some == program.library.Some.get.typed(Seq(tb)) =>
+            (e(application(fv, Seq(v))) match { case StringLiteral(s) => s case _ => throw EvalError(typeErrorMsg(k, StringType)) })
+          case _ => throw EvalError(typeErrorMsg(v, program.library.Some.get.typed(Seq(tb))))
+        })}.mkString(betweenkv_str) + post_str
+      
+      StringLiteral(res)
+
     case FunctionInvocation(tfd, args) =>
       if (gctx.stepsLeft < 0) {
         throw RuntimeError("Exceeded number of allocated methods calls ("+gctx.maxSteps+")")
@@ -627,7 +645,10 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
 
                 val domainMap = quantifierDomains.groupBy(_._1).mapValues(_.map(_._2).flatten)
                 andJoin(domainMap.toSeq.map { case (id, dom) =>
-                  orJoin(dom.toSeq.map { case (path, value) => and(path, Equals(Variable(id), value)) })
+                  orJoin(dom.toSeq.map { case (path, value) =>
+                    // @nv: Equality with variable is ok, see [[leon.codegen.runtime.Monitor]]
+                    path and Equals(Variable(id), value)
+                  })
                 })
               })
 
@@ -735,12 +756,7 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
         val solver  = solverf.getNewSolver()
 
         try {
-          val eqs = p.as.map {
-            case id =>
-              Equals(Variable(id), rctx.mappings(id))
-          }
-
-          val cnstr = andJoin(eqs ::: p.pc :: p.phi :: Nil)
+          val cnstr = p.pc withBindings p.as.map(id => id -> rctx.mappings(id)) and p.phi
           solver.assertCnstr(cnstr)
 
           solver.check match {

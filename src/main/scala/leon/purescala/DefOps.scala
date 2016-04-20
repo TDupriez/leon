@@ -97,17 +97,17 @@ object DefOps {
   }
 
   private def stripPrefix(off: List[String], from: List[String]): List[String] = {
-    val commonPrefix = (off zip from).takeWhile(p => p._1 == p._2)
+      val commonPrefix = (off zip from).takeWhile(p => p._1 == p._2)
 
-    val res = off.drop(commonPrefix.size)
+      val res = off.drop(commonPrefix.size)
 
-    if (res.isEmpty) {
-      if (off.isEmpty) List()
-      else List(off.last)
-    } else {
-      res
+      if (res.isEmpty) {
+        if (off.isEmpty) List()
+        else List(off.last)
+      } else {
+        res
+      }
     }
-  }
   
   def simplifyPath(namesOf: List[String], from: Definition, useUniqueIds: Boolean)(implicit pgm: Program) = {
     val pathFrom = pathFromRoot(from).dropWhile(_.isInstanceOf[Program])
@@ -135,13 +135,13 @@ object DefOps {
   }
   
   private def getNameUnderImports(pathFrom: List[Definition], namesOf: List[String]): Seq[List[String]] = {
-    (pathFrom match {
+    pathFrom match {
       case (u: UnitDef) :: _ =>
         val imports = u.imports.map {
           case Import(path, true) => path
           case Import(path, false) => path.init
         }.toList
-  
+
         def stripImport(of: List[String], imp: List[String]): Option[List[String]] = {
           if (of.startsWith(imp)) {
             Some(stripPrefix(of, imp))
@@ -149,13 +149,13 @@ object DefOps {
             None
           }
         }
-  
+
         for {imp <- imports
-             strippedImport <- stripImport(namesOf, imp)    
+             strippedImport <- stripImport(namesOf, imp)
         } yield strippedImport
       case _ =>
         Nil
-    })
+    }
   }
 
   def pathToNames(path: List[Definition], useUniqueIds: Boolean): List[String] = {
@@ -316,14 +316,25 @@ object DefOps {
     val fdMap = new utils.Bijection[FunDef    , FunDef    ]
 
     val transformer = new DefinitionTransformer(idMap, fdMap, cdMap) {
-      override def transform(expr: Expr)(implicit bindings: Map[Identifier, Identifier]): Expr = expr match {
+      override def transformExpr(expr: Expr)(implicit bindings: Map[Identifier, Identifier]): Option[Expr] = expr match {
         case fi @ FunctionInvocation(TypedFunDef(fd, tps), args) =>
-          val nfi = fiMapF(fi, transform(fd)) getOrElse expr
-          super.transform(nfi)
+          val transformFd = transform(fd)
+          if(transformFd != fd)
+            fiMapF(fi, transformFd)
+          else
+            None
+          //val nfi = fiMapF(fi, transform(fd)) getOrElse expr
+          //Some(super.transform(nfi))
         case cc @ CaseClass(cct, args) =>
-          val ncc = ciMapF(cc, transform(cct).asInstanceOf[CaseClassType]) getOrElse expr
-          super.transform(ncc)
-        case _ => super.transform(expr)
+          val transformCct = transform(cct).asInstanceOf[CaseClassType]
+          if(transformCct != cct)
+            ciMapF(cc, transformCct)
+          else
+            None
+          //val ncc = ciMapF(cc, transform(cct).asInstanceOf[CaseClassType]) getOrElse expr
+          //Some(super.transform(ncc))
+        case _ =>
+          None
       }
 
       override def transformFunDef(fd: FunDef): Option[FunDef] = fdMapF(fd)
@@ -354,8 +365,9 @@ object DefOps {
                                  fiMapF: (FunctionInvocation, FunDef) => Option[Expr] = defaultFiMap)
                                  : (Program, Map[Identifier, Identifier], Map[FunDef, FunDef], Map[ClassDef, ClassDef]) = {
     replaceDefs(p)(fdMapF, cd => None, fiMapF)
-  }
+      }
 
+  /** Replaces all function calls by an expression depending on the previous function invocation and the new mapped function */
   def replaceFunCalls(e: Expr, fdMapF: FunDef => FunDef, fiMapF: (FunctionInvocation, FunDef) => Option[Expr] = defaultFiMap): Expr = {
     preMap {
       case me @ MatchExpr(scrut, cases) =>
@@ -384,7 +396,6 @@ object DefOps {
   /** Clones the given program by replacing some classes by other classes.
     * 
     * @param p The original program
-    * @param cdMapF Given c returns Some(d) where d can take an abstract parent and return a class e if c should be replaced by e, and None if c should be kept.
     * @param ciMapF Given a previous case class invocation and its new case class definition, returns the expression to use.
     *               By default it is the case class construction using the new case class definition.
     * @return the new program with a map from the old case classes to the new case classes, with maps concerning identifiers and function definitions. */
@@ -599,7 +610,7 @@ object DefOps {
           ciMapF(ci, tpMap(ct)).map(_.setPos(ci))
         case CaseClassSelector(cct, expr, identifier) =>
           val new_cct = tpMap(cct)
-          val selection = (if(new_cct != cct || new_cct.classDef.fieldsIds != cct.classDef.fieldsIds) idMap(identifier) else identifier)
+          val selection = if (new_cct != cct || new_cct.classDef.fieldsIds != cct.classDef.fieldsIds) idMap(identifier) else identifier
           Some(CaseClassSelector(new_cct, expr, selection))
         case IsInstanceOf(e, ct) => Some(IsInstanceOf(e, tpMap(ct)))
         case AsInstanceOf(e, ct) => Some(AsInstanceOf(e, tpMap(ct)))
@@ -661,7 +672,7 @@ object DefOps {
       p.definedFunctions.filter(f => f.id.name == after.id.name).map(fd => fd.id.name + " : " + fd) match {
         case Nil => 
         case e => println("Did you mean " + e)
-      }
+    }
       println(Thread.currentThread().getStackTrace.map(_.toString).take(10).mkString("\n"))
     }
 

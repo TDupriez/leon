@@ -11,13 +11,13 @@ import purescala.Constructors._
 import purescala.Extractors._
 import utils.SeqUtils._
 
-/**
- * Attach sizes to labels and transmit them down accordingly
- */
-case class SimilarTo(e: Expr) extends Aspect {
+/** Generates expressions similar to a [[Seq]] of given expressions
+  * @param es The expressions for which similar ones will be generated
+  */
+case class SimilarTo(es: Seq[Expr]) extends Aspect {
   type Prods = Seq[ProductionRule[Label, Expr]]
 
-  def asString(implicit ctx: LeonContext) = "~"+e.asString+"~"
+  def asString(implicit ctx: LeonContext) = es.mkString("~", "~", "~")
 
   def term(e: Expr, tag: Tags.Tag = Tags.Top, cost: Int = 1): ProductionRule[Label, Expr] = {
     ProductionRule(Nil, { case Seq() => e }, tag, cost)
@@ -28,13 +28,13 @@ case class SimilarTo(e: Expr) extends Aspect {
    *                f(a, ~b~)
    *                f(b, a)   // if non-commut
    */
-  def applyTo(lab: Label, ps: Seq[ProductionRule[Label, Expr]])(implicit ctx: LeonContext) = {
+  def applyTo(lab: Label, ps: Seq[Production])(implicit ctx: LeonContext) = {
     def isCommutative(e: Expr) = e match {
       case _: Plus | _: Times => true
       case _ => false
     }
 
-    val similarProds: Prods = if (isSubtypeOf(e.getType, lab.getType)) {
+    val similarProds: Prods = es.filter(e => isSubtypeOf(e.getType, lab.getType)).flatMap { e =>
       val swaps: Prods = e match {
         case Operator(as, b) if as.nonEmpty && !isCommutative(e) =>
           val ast = as.zipWithIndex.groupBy(_._1.getType).mapValues(_.map(_._2).toList)
@@ -63,10 +63,10 @@ case class SimilarTo(e: Expr) extends Aspect {
       }
 
       val subs: Prods = e match {
-        case Operator(as, b) if as.size > 0 =>
+        case Operator(as, b) if as.nonEmpty =>
           for ((a, i) <- as.zipWithIndex) yield {
             ProductionRule[Label, Expr](
-              List(Label(a.getType).withAspect(SimilarTo(a))),
+              List(Label(a.getType).withAspect(SimilarTo(Seq(a)))),
               { case Seq(e) =>
                 b(as.updated(i, e))
               },
@@ -127,8 +127,6 @@ case class SimilarTo(e: Expr) extends Aspect {
       }
 
       swaps ++ subs ++ typeVariations ++ ccVariations
-    } else {
-      Nil
     }
 
     ps ++ similarProds

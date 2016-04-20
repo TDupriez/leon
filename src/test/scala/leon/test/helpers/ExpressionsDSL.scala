@@ -9,6 +9,8 @@ import leon.purescala.Common._
 import leon.purescala.Types._
 import leon.purescala.Expressions._
 
+import scala.language.implicitConversions
+
 trait ExpressionsDSLVariables {
   val F = BooleanLiteral(false)
   val T = BooleanLiteral(true)
@@ -99,5 +101,9 @@ self: Assertions =>
 
 trait ExpressionsDSL extends ExpressionsDSLVariables with ExpressionsDSLProgram {
   self: Assertions =>
-  
+ 
+ 
+  implicit def int2IntLit(i: Int): IntLiteral = IntLiteral(i)
+  implicit def bigInt2IntegerLit(i: BigInt): InfiniteIntegerLiteral = InfiniteIntegerLiteral(i)
+
 }

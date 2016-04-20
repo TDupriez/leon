@@ -6,6 +6,7 @@ package purescala
 import Common._
 import Definitions._
 import Expressions._
+import xlang.Expressions._
 import Extractors._
 import Types._
 
@@ -34,6 +35,13 @@ trait TreeTransformer {
     case Let(a, expr, body) =>
       val newA = transform(a)
       Let(newA, transform(expr), transform(body)(bindings + (a -> newA))).copiedFrom(e)
+    case LetVar(a, expr, body) =>
+      val newA = transform(a)
+      LetVar(newA, transform(expr), transform(body)(bindings + (a -> newA))).copiedFrom(e)
+    case LetDef(fds, body) =>
+      val rFds = fds map transform
+      val rBody = transform(body)
+      LetDef(rFds, rBody).copiedFrom(e)
     case CaseClass(cct, args) =>
       CaseClass(transform(cct).asInstanceOf[CaseClassType], args map transform).copiedFrom(e)
     case CaseClassSelector(cct, caseClass, selector) =>

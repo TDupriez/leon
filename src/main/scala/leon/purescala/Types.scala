@@ -3,8 +3,6 @@
 package leon
 package purescala
 
-import scala.language.implicitConversions
-
 import Common._
 import Expressions._
 import Definitions._
@@ -74,7 +72,7 @@ object Types {
    * If you are not sure about the requirement, 
    * you should use tupleTypeWrap in purescala.Constructors
    */
-  case class TupleType (bases: Seq[TypeTree]) extends TypeTree {
+  case class TupleType(bases: Seq[TypeTree]) extends TypeTree {
     val dimension: Int = bases.length
     require(dimension >= 2)
   }
@@ -136,7 +134,7 @@ object Types {
   case class AbstractClassType(classDef: AbstractClassDef, tps: Seq[TypeTree]) extends ClassType
   case class CaseClassType(classDef: CaseClassDef, tps: Seq[TypeTree]) extends ClassType
 
-  object NAryType extends SubTreeOps.Extractor[TypeTree] {
+  object NAryType extends TreeExtractor[TypeTree] {
     def unapply(t: TypeTree): Option[(Seq[TypeTree], Seq[TypeTree] => TypeTree)] = t match {
       case CaseClassType(ccd, ts) => Some((ts, ts => CaseClassType(ccd, ts)))
       case AbstractClassType(acd, ts) => Some((ts, ts => AbstractClassType(acd, ts)))
@@ -146,8 +144,16 @@ object Types {
       case BagType(t) => Some((Seq(t), ts => BagType(ts.head)))
       case MapType(from,to) => Some((Seq(from, to), t => MapType(t(0), t(1))))
       case FunctionType(fts, tt) => Some((tt +: fts, ts => FunctionType(ts.tail.toList, ts.head)))
-      /* n-ary operators */
+      /* nullary types */
       case t => Some(Nil, _ => t)
+    }
+  }
+
+  object FirstOrderFunctionType {
+    def unapply(tpe: TypeTree): Option[(Seq[TypeTree], TypeTree)] = tpe match {
+      case FunctionType(from, to) =>
+        unapply(to).map(p => (from ++ p._1) -> p._2) orElse Some(from -> to)
+      case _ => None
     }
   }
   

@@ -3,6 +3,7 @@
 package leon
 package synthesis
 
+import purescala.Expressions.Choose
 import purescala.Definitions._
 import purescala.ExprOps._
 import purescala.DefOps._
@@ -54,6 +55,8 @@ class Synthesizer(val context : LeonContext,
     }
 
     val s = getSearch
+
+    reporter.info(ASCIIHelpers.title(s"Synthesizing '${ci.fd.id}'"))
 
     val t = context.timers.synthesis.search.start()
 
@@ -134,6 +137,9 @@ class Synthesizer(val context : LeonContext,
     import verification.VerificationPhase._
     import verification.VerificationContext
 
+    val timer = context.timers.synthesis.validation
+    timer.start()
+
     reporter.info("Solution requires validation")
 
     val (npr, fds) = solutionToProgram(sol)
@@ -141,9 +147,9 @@ class Synthesizer(val context : LeonContext,
     val solverf = SolverFactory.default(context, npr).withTimeout(timeout)
 
     try {
-      val vctx = VerificationContext(context, npr, solverf, context.reporter)
+      val vctx = new VerificationContext(context, npr, solverf)
       val vcs = generateVCs(vctx, fds)
-      val vcreport = checkVCs(vctx, vcs)
+      val vcreport = checkVCs(vctx, vcs, stopWhen = _.isInvalid)
 
       if (vcreport.totalValid == vcreport.totalConditions) {
         (sol, Some(true))
@@ -157,6 +163,7 @@ class Synthesizer(val context : LeonContext,
         (new PartialSolution(search.strat, false).getSolutionFor(search.g.root), Some(false))
       }
     } finally {
+      timer.stop()
       solverf.shutdown()
     }
   }
@@ -171,6 +178,11 @@ class Synthesizer(val context : LeonContext,
       case fd if fd eq ci.fd =>
         val nfd = fd.duplicate()
         nfd.fullBody = replace(Map(ci.source -> solutionExpr), nfd.fullBody)
+        (fd.body, fd.postcondition) match {
+          case (Some(Choose(pred)), None) =>
+            nfd.postcondition = Some(pred)
+          case _ =>
+        }
         Some(nfd)
       case _ => None
     })

@@ -36,7 +36,7 @@ object LazyVerificationPhase {
       case fd if fd.postcondition.exists { exists(hasInstVar) } =>
         // remove the conjuncts that use instrumentation vars
         val Lambda(resdef, pbody) = fd.postcondition.get
-        val npost = pbody match {
+        val npost = simplifyByConstructors(pbody) match {
           case And(args) =>
             createAnd(args.filterNot(hasInstVar))
           case l: Let => // checks if the body of the let can be deconstructed as And
@@ -176,7 +176,7 @@ object LazyVerificationPhase {
   def collectAntsPostTmpl(fd: FunDef) = {
     val Lambda(Seq(resdef), _) = fd.postcondition.get
     val (pbody, tmpl) = (fd.getPostWoTemplate, fd.template)
-    val (instPost, assumptions) = pbody match {
+    val (instPost, assumptions) = simplifyByConstructors(pbody) match {
       case And(args) =>
         val (instSpecs, rest) = args.partition(accessesSecondRes(_, resdef.id))
         (createAnd(instSpecs), createAnd(rest))
@@ -199,7 +199,6 @@ object LazyVerificationPhase {
 
   def checkVCs(vcs: List[VC], checkCtx: LeonContext, p: Program) = {
     val timeout: Option[Long] = None
-    val reporter = checkCtx.reporter
     // Solvers selection and validation
     val baseSolverF = SolverFactory.getFromSettings(checkCtx, p)
     val solverF = timeout match {
@@ -208,7 +207,7 @@ object LazyVerificationPhase {
       case None =>
         baseSolverF
     }
-    val vctx = VerificationContext(checkCtx, p, solverF, reporter)
+    val vctx = new VerificationContext(checkCtx, p, solverF)
     try {
       VerificationPhase.checkVCs(vctx, vcs)
       //println("Resource Verification Results: \n" + veriRep.summaryString)

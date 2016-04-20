@@ -77,7 +77,7 @@ object Solution {
   }
 
   def chooseComplete(p: Problem): Solution = {
-    new Solution(BooleanLiteral(true), Set(), Choose(Lambda(p.xs.map(ValDef(_)), and(p.pc, p.phi))))
+    new Solution(BooleanLiteral(true), Set(), Choose(Lambda(p.xs.map(ValDef(_)), p.pc and p.phi)))
   }
 
   // Generate the simplest, wrongest solution, used for complexity lowerbound
@@ -96,6 +96,6 @@ object Solution {
 
   def UNSAT(implicit p: Problem): Solution = {
     val tpe = tupleTypeWrap(p.xs.map(_.getType))
-    Solution(BooleanLiteral(false), Set(), Error(tpe, "Path condition is UNSAT!"))
+    Solution(BooleanLiteral(false), Set(), Error(tpe, "Spec is UNSAT for this path!"))
   }
 }

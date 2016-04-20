@@ -117,6 +117,15 @@ object Template {
     }
   }
 
+  private def mkApplication(caller: Expr, args: Seq[Expr]): Expr = caller.getType match {
+    case FunctionType(from, to) =>
+      val (curr, next) = args.splitAt(from.size)
+      mkApplication(Application(caller, curr), next)
+    case _ =>
+      assert(args.isEmpty, s"Non-function typed $caller applied to ${args.mkString(",")}")
+      caller
+  }
+
   private def invocationMatcher[T](encodeExpr: Expr => T)(tfd: TypedFunDef, args: Seq[Expr]): Matcher[T] = {
     assert(tfd.returnType.isInstanceOf[FunctionType], "invocationMatcher() is only defined on function-typed defs")
 
@@ -168,10 +177,10 @@ object Template {
           } (expr)
 
           val withPaths = CollectorWithPaths { case FreshFunction(f) => f }.traverse(e)
-          functions ++= withPaths.map { case (f, TopLevelAnds(paths)) =>
+          functions ++= withPaths.map { case (f, path) =>
             val tpe = bestRealType(f.getType).asInstanceOf[FunctionType]
-            val path = andJoin(paths.map(clean))
-            (encodeExpr(and(Variable(b), path)), tpe, encodeExpr(f))
+            val cleanPath = path.map(clean)
+            (encodeExpr(and(Variable(b), cleanPath.toPath)), tpe, encodeExpr(f))
           }
 
           val cleanExpr = clean(e)
@@ -186,7 +195,7 @@ object Template {
     val optIdCall = optCall.map(tfd => TemplateCallInfo[T](tfd, arguments.map(p => Left(p._2))))
     val optIdApp = optApp.map { case (idT, tpe) =>
       val id = FreshIdentifier("x", tpe, true)
-      val encoded = encoder.encodeExpr(Map(id -> idT) ++ arguments)(Application(Variable(id), arguments.map(_._1.toVariable)))
+      val encoded = encoder.encodeExpr(Map(id -> idT) ++ arguments)(mkApplication(Variable(id), arguments.map(_._1.toVariable)))
       App(idT, bestRealType(tpe).asInstanceOf[FunctionType], arguments.map(p => Left(p._2)), encoded)
     }
 
@@ -229,7 +238,7 @@ object Template {
           funInfos ++= firstOrderCallsOf(e).map(p => TemplateCallInfo(p._1, p._2.map(encodeArg)))
           appInfos ++= firstOrderAppsOf(e).map { case (c, args) =>
             val tpe = bestRealType(c.getType).asInstanceOf[FunctionType]
-            App(encodeExpr(c), tpe, args.map(encodeArg), encodeExpr(Application(c, args)))
+            App(encodeExpr(c), tpe, args.map(encodeArg), encodeExpr(mkApplication(c, args)))
           }
 
           matchInfos ++= exprToMatcher.values
@@ -377,8 +386,7 @@ object Template {
     manager match {
       case lmanager: LambdaManager[T] =>
         for ((b,apps) <- applications; bp = substituter(b); app <- apps) {
-          val newApp = app.copy(caller = substituter(app.caller), args = app.args.map(_.substitute(substituter, msubst)))
-          instantiation ++= lmanager.instantiateApp(bp, newApp)
+          instantiation ++= lmanager.instantiateApp(bp, app.substitute(substituter, msubst))
         }
 
       case _ =>

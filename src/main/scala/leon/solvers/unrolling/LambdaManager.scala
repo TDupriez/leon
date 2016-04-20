@@ -22,6 +22,11 @@ import scala.collection.mutable.{Map => MutableMap, Set => MutableSet}
 
 case class App[T](caller: T, tpe: FunctionType, args: Seq[Arg[T]], encoded: T) {
   override def toString = "(" + caller + " : " + tpe + ")" + args.map(_.encoded).mkString("(", ",", ")")
+  def substitute(substituter: T => T, msubst: Map[T, Matcher[T]]): App[T] = copy(
+    caller = substituter(caller),
+    args = args.map(_.substitute(substituter, msubst)),
+    encoded = substituter(encoded)
+  )
 }
 
 object LambdaTemplate {
@@ -251,7 +256,7 @@ class LambdaManager[T](encoder: TemplateEncoder[T]) extends DatatypeManager(enco
       (Seq(encoder.mkImplies(blocker, typeBlocker)), Map.empty, Map.empty)
 
     case None =>
-      val App(caller, tpe @ FunctionType(_, to), args, value) = app
+      val App(caller, tpe @ FirstOrderFunctionType(_, to), args, value) = app
       val typeBlocker = encoder.encodeId(FreshIdentifier("t", BooleanType))
       typeBlockers += value -> typeBlocker
       implies(blocker, typeBlocker)

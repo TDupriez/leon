@@ -43,9 +43,9 @@ object AntiAliasingPhase extends TransformationPhase {
     //  p._1.fields.zip(p._2.fields).filter(pvd => pvd._1.id != pvd._2).map(p => (p._1.id, p._2.id))
     //}).toMap
     val transformer = new DefinitionTransformer {
-      override def transform(tpe: TypeTree): TypeTree = tpe match {
-        case (ft: FunctionType) => makeFunctionTypeExplicit(ft)
-        case _ => super.transform(tpe)
+      override def transformType(tpe: TypeTree): Option[TypeTree] = tpe match {
+        case (ft: FunctionType) => Some(makeFunctionTypeExplicit(ft))
+        case _ => None
       }
       //override def transformClassDef(cd: ClassDef): Option[ClassDef] = ccdBijection.getB(cd)
     }
@@ -84,6 +84,7 @@ object AntiAliasingPhase extends TransformationPhase {
     } {
       updatedFunctions += (fd -> updateFunDef(fd, effects)(ctx))
     }
+    //println(updatedFunctions.filter(p => p._1.id != p._2.id).mkString("\n"))
 
     for {
       fd <- fds
@@ -667,7 +668,7 @@ object AntiAliasingPhase extends TransformationPhase {
   private def isMutableType(tpe: TypeTree, abstractClasses: Set[ClassType] = Set()): Boolean = tpe match {
     case (ct: ClassType) if abstractClasses.contains(ct) => false
     case (arr: ArrayType) => true
-    case CaseClassType(ccd, _) => ccd.fields.exists(vd => vd.isVar || isMutableType(vd.getType, abstractClasses))
+    case ct@CaseClassType(ccd, _) => ccd.fields.exists(vd => vd.isVar || isMutableType(vd.getType, abstractClasses + ct))
     case (ct: ClassType) => ct.knownDescendants.exists(c => isMutableType(c, abstractClasses + ct))
     case _ => false
   }
