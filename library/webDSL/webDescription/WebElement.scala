@@ -22,6 +22,7 @@ sealed trait WebElement {
 //case class TestWebElement1(sons: leon.collection.List[WebElement]) extends WebElement
 //case class TestWebElement2(oi: Int) extends WebElement
 case class Div(/*id: Int,*/ sons: leon.collection.List[WebElement]) extends WebElement //{var weid = id}
+case class Input(/*id: Int,*/ tpe: String, placeHolder: String, text: String) extends WebElement {override val sons = leon.collection.List[WebElement]()/*var weid = id*/}
 case class Header(/*id: Int,*/ text: String, level: HeaderLevel) extends WebElement {override val sons = leon.collection.List[WebElement]()/*var weid = id*/}
 case class Paragraph(/*id: Int,*/ text: String) extends WebElement {override val sons = leon.collection.List[WebElement]()/*var weid = id*/}
 
