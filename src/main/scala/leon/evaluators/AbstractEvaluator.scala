@@ -63,10 +63,6 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
     expr match {
     case Variable(id) =>
       (rctx.mappings.get(id), rctx.mappingsAbstract.get(id)) match {
-        case (Some(v), None) if v != expr => // We further evaluate v to make sure it is a value
-          e(v)
-        case (Some(v), Some(va)) if v != expr =>
-          (e(v)._1, va)
         case (Some(v), Some(va)) =>
           (v, va)
         case _ =>
