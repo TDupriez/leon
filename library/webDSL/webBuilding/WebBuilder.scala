@@ -30,7 +30,7 @@ object implicits {
   }
   def getAllStringProperty(tag: String, properties: List[PropertySet], default: String): String = {
     properties.foldLeft("") { (acc, e) => e match {
-      case PropertyStringSet(tag2, e) if tag2 == tag => e + acc
+      case PropertyStringSet(tag2, e) if tag2 == tag => acc + e
       case _ => acc
     }}
   }
