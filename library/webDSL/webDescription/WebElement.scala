@@ -1,6 +1,7 @@
 package leon.webDSL.webDescription
 import leon.collection._
 import leon.lang._
+import leon.annotation._
 
 /**
   * Created by dupriez on 3/11/16.
@@ -19,11 +20,14 @@ case class Element(tag: String, sons: leon.collection.List[WebElement], properti
     val (sons2, properties2, style2) = leon.webDSL.webBuilding.implicits.extractElements(elems, Nil(), Nil(), Nil())
     Element(tag, sons ++ sons2, properties ++ properties2, style ++ style2) 
   }
-  def apply(): Element = this
-  def apply(e: WebTree): Element = apply(List(e))
-  def apply(e: WebTree, f: WebTree): Element = apply(List(e, f))
-  def apply(e: WebTree, f: WebTree, g: WebTree): Element = apply(List(e, f, g))
-  def apply(e: WebTree, f: WebTree, g: WebTree, h: WebTree): Element = apply(List(e, f, g, h))
+  @ignore
+  def apply(elems: WebTree*): Element = {
+    var l: List[WebTree] = Nil[WebTree]()
+    for (e <- elems) {
+      l = Cons(e, l)
+    }
+    apply(l.reverse)
+  }
 }
 case class TextElement(text: String) extends WebElement
 case class WebAttribute(attributeName: String, attributeValue: String) extends WebTree
