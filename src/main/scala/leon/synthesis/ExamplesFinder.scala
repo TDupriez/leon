@@ -99,7 +99,7 @@ class ExamplesFinder(ctx0: LeonContext, program: Program) {
     }
 
     def isValidExample(ex: Example): Boolean = {
-      if(this.keepAbstractExamples) return true // TODO: Abstract interpretation here ?
+      if (this.keepAbstractExamples) return true // TODO: Abstract interpretation here ?
       val (mapping, cond) = ex match {
         case io: InOutExample =>
           (Map((p.as zip io.ins) ++ (p.xs zip io.outs): _*), p.pc and p.phi)
@@ -143,8 +143,8 @@ class ExamplesFinder(ctx0: LeonContext, program: Program) {
           val ids  = variablesOf(test)
 
           // Test could contain expressions, we evaluate
-          evaluator.eval(test, ids.map { (i: Identifier) => i -> i.toVariable }.toMap) match {
-            case EvaluationResults.Successful(res) => res
+          abstractEvaluator.eval(test, Model.empty) match {
+            case EvaluationResults.Successful((res, _)) => res
             case _                                 => test
           }
         }

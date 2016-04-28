@@ -61,7 +61,7 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
   var evaluateCaseClassSelector = true
   
   protected def e(expr: Expr)(implicit rctx: RC, gctx: GC): (Expr, Expr) = {
-    implicit def aToC: AbstractEvaluator.this.underlying.RC = DefaultRecContext(rctx.mappings)
+    implicit def aToC: AbstractEvaluator.this.underlying.RC = DefaultRecContext(rctx.mappings.filter{ case (k, v) => ExprOps.isValue(v) })
     expr match {
     case Variable(id) =>
       (rctx.mappings.get(id), rctx.mappingsAbstract.get(id)) match {
@@ -118,22 +118,26 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
         }
       }
       callResult
+
     case Let(i, ex, b) =>
       val (first, second) = e(ex)
       e(b)(rctx.withNewVar(i, (first, second)), gctx)
+
     case Application(caller, args) =>
-      underlying.e(caller) match {
+      val (ecaller, tcaller) = e(caller)
+      val nargs = args map e
+      val (eargs, targs) = nargs.unzip
+      val abs_value = Application(tcaller, targs)
+      if (ExprOps.isValue(ecaller) && (eargs forall ExprOps.isValue)) {
+        (underlying.e(Application(ecaller, eargs)), abs_value)
+      } else ecaller match {
         case l @ Lambda(params, body) =>
-          val newArgs = args.map(e)
-          val mapping = (params map { _.id } zip newArgs).toMap
+          val mapping = (params map (_.id) zip nargs).toMap
           e(body)(rctx.withNewVars2(mapping), gctx)
-        case FiniteLambda(mapping, dflt, _) =>
-          mapping.find { case (pargs, res) =>
-            (args zip pargs).forall(p => underlying.e(Equals(p._1, p._2)) == BooleanLiteral(true))
-          }.map{ case (key, value) => (value, value)}.getOrElse((dflt, dflt))
-        case f =>
-          throw EvalError("Cannot apply non-lambda function " + f.asString)
+        case _ =>
+          (Application(ecaller, eargs), abs_value)
       }
+
     case Operator(es, builder) =>
       val (ees, ts) = es.map(e).unzip
       if(ees forall ExprOps.isValue) {
