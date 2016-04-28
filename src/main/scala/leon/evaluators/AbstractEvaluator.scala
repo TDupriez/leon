@@ -59,6 +59,8 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
  
   /** True if CaseClassSelector(...CaseClass(...))  have to be simplified. */
   var evaluateCaseClassSelector = true
+  /** True if Application(Lambda(), ...)  have to be simplified. */
+  var evaluateApplications = true
   
   protected def e(expr: Expr)(implicit rctx: RC, gctx: GC): (Expr, Expr) = {
     implicit def aToC: AbstractEvaluator.this.underlying.RC = DefaultRecContext(rctx.mappings.filter{ case (k, v) => ExprOps.isValue(v) })
@@ -127,15 +129,17 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
       val (ecaller, tcaller) = e(caller)
       val nargs = args map e
       val (eargs, targs) = nargs.unzip
-      val abs_value = Application(tcaller, targs)
-      if (ExprOps.isValue(ecaller) && (eargs forall ExprOps.isValue)) {
-        (underlying.e(Application(ecaller, eargs)), abs_value)
-      } else ecaller match {
-        case l @ Lambda(params, body) =>
+      ecaller match {
+        case l @ Lambda(params, body) if evaluateApplications =>
           val mapping = (params map (_.id) zip nargs).toMap
           e(body)(rctx.withNewVars2(mapping), gctx)
         case _ =>
-          (Application(ecaller, eargs), abs_value)
+          val abs_value = Application(tcaller, targs)
+          if (ExprOps.isValue(ecaller) && (eargs forall ExprOps.isValue)) {
+            (underlying.e(Application(ecaller, eargs)), abs_value)
+          } else {
+            (Application(ecaller, eargs), abs_value)
+          }
       }
 
     case Operator(es, builder) =>
