@@ -62,6 +62,20 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
   /** True if Application(Lambda(), ...)  have to be simplified. */
   var evaluateApplications = true
   
+  private def time[R](block: => R)(other_eval: =>Unit)(msg: =>String): R = {
+      val t0 = System.nanoTime()
+      val result = block    // call-by-name
+      val t1 = System.nanoTime()
+      val normalResult = other_eval
+      val t2 = System.nanoTime()
+      if((t2 - t1) * 20 < t1 - t0) {
+        println(s"Bigslowdown $msg: " + (t1 - t0)/1000000L + "ms in abstract vs. " + (t2 - t1)/1000000L + " in evaluator")
+      }
+      
+      result
+  }
+    
+  
   protected def e(expr: Expr)(implicit rctx: RC, gctx: GC): (Expr, Expr) = {
     implicit def aToC: AbstractEvaluator.this.underlying.RC = DefaultRecContext(rctx.mappings.filter{ case (k, v) => ExprOps.isValue(v) })
     expr match {
@@ -147,7 +161,19 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
       if(ees forall ExprOps.isValue) {
         val conc_value = underlying.e(builder(ees))
         val abs_value = builder(ts)
-        (conc_value, abs_value)
+        val final_abs_value = if( evaluateCaseClassSelector) {
+          abs_value match {
+            case CaseClassSelector(cct, CaseClass(ct, args), id) =>
+              args(ct.classDef.selectorID2Index(id))
+            case CaseClassSelector(cct, AsInstanceOf(CaseClass(ct, args), ccct), id) =>
+              args(ct.classDef.selectorID2Index(id))
+            case TupleSelect(Tuple(args), i) =>
+              args(i-1)
+            case e => e
+          }
+        } else abs_value
+        
+        (conc_value, final_abs_value)
       } else {
         (builder(ees), builder(ts))
       }
@@ -161,7 +187,7 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
     def matchesPattern(pat: Pattern, expr: Expr, exprFromScrut: Expr): Option[Map[Identifier, (Expr, Expr)]] = (pat, expr) match {
       case (InstanceOfPattern(ob, pct), e) =>
         if (isSubtypeOf(e.getType, pct)) {
-          Some(obind(ob, e, AsInstanceOf(exprFromScrut, pct)))
+          Some(obind(ob, e, exprFromScrut/*AsInstanceOf(exprFromScrut, pct)*/))
         } else {
           None
         }
@@ -174,6 +200,8 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
             case ((s, a), id) =>
               exprFromScrut match {
                 case CaseClass(ct, args) if evaluateCaseClassSelector =>
+                  matchesPattern(s, a, args(ct.classDef.selectorID2Index(id)))
+                case AsInstanceOf(CaseClass(ct, args), _) if evaluateCaseClassSelector =>
                   matchesPattern(s, a, args(ct.classDef.selectorID2Index(id)))
                 case _ =>
                   matchesPattern(s, a, CaseClassSelector(ct, exprFromScrut, id))
@@ -208,10 +236,10 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
           val res = (subs zip args).zipWithIndex.map{
             case ((s, a), i) =>
               exprFromScrut match {
-                case TupleSelect(Tuple(args), i) if evaluateCaseClassSelector=>
-                  matchesPattern(s, a, args(i - 1))
+                case Tuple(args) if evaluateCaseClassSelector=>
+                  matchesPattern(s, a, args(i))
                 case _ =>
-                  matchesPattern(s, a, TupleSelect(exprFromScrut, i + 1))
+                  matchesPattern(s, a, TupleSelect(exprFromScrut, i+1))
               }
           }
           if (res.forall(_.isDefined)) {
