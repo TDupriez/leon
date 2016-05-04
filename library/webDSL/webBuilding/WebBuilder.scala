@@ -14,11 +14,23 @@ case class CssAcceptor[T](tag: String) {
 object implicits {
   implicit def toAttribute(e: String): WebTree = TextElement(e)
   
-  def extractElements(e: List[WebTree], acc: List[WebElement], acc2: List[WebAttribute], acc3: List[WebStyle]): (List[WebElement], List[WebAttribute], List[WebStyle]) = e match {
+  /*def extractElements(e: List[WebTree], acc: List[WebElement], acc2: List[WebAttribute], acc3: List[WebStyle]): (List[WebElement], List[WebAttribute], List[WebStyle]) = e match {
     case Nil() => (acc.reverse, acc2.reverse, acc3.reverse)
     case Cons(e: WebElement, t) => extractElements(t, e::acc, acc2, acc3)
     case Cons(p: WebAttribute, t) => extractElements(t, acc, p::acc2, acc3)
     case Cons(p: WebStyle, t) => extractElements(t, acc, acc2, p::acc3)
+  }*/
+  def extractElements(e: List[WebTree]): (List[WebElement], List[WebAttribute], List[WebStyle]) = e match {
+    case Nil() => (Nil(), Nil(), Nil())
+    case Cons(e: WebElement, t) =>
+      val abc = extractElements(t)
+      (e::abc._1, abc._2, abc._3)
+    case Cons(e: WebAttribute, t) => 
+      val abc = extractElements(t)
+      (abc._1, e::abc._2, abc._3)
+    case Cons(e: WebStyle, t) => 
+      val abc = extractElements(t)
+      (abc._1, abc._2, e::abc._3)
   }
   
   def getStringProperty(tag: String, properties: List[WebAttribute], default: String): String = {
@@ -38,7 +50,7 @@ object implicits {
 object < {
   import implicits._
   def extract(tag: String, elems: List[WebTree]): Element = {
-    val (children, properties, styles) = extractElements(elems, Nil(), Nil(), Nil())
+    val (children, properties, styles) = extractElements(elems)
     Element(tag, children, properties, styles)
   }
   
