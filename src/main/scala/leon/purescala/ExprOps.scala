@@ -287,51 +287,58 @@ object ExprOps extends GenTreeOps[Expr] {
     * This function relies on the static map `typedIds` to ensure identical
     * structures and must therefore be synchronized.
     */
-  def normalizeStructure(expr: Expr): (Expr, Map[Identifier, Identifier]) = synchronized {
-    val allVars : Seq[Identifier] = fold[Seq[Identifier]] {
-      (expr, idSeqs) => idSeqs.foldLeft(expr match {
-        case Lambda(args, _) => args.map(_.id)
-        case Forall(args, _) => args.map(_.id)
-        case LetDef(fds, _) => fds.flatMap(_.paramIds)
-        case Let(i, _, _) => Seq(i)
-        case MatchExpr(_, cses) => cses.flatMap(_.pattern.binders)
-        case Passes(_, _, cses) => cses.flatMap(_.pattern.binders)
-        case Variable(id) => Seq(id)
-        case _ => Seq.empty[Identifier]
-      })((acc, seq) => acc ++ seq)
-    } (expr).distinct
+  def normalizeStructure(args: Seq[Identifier], expr: Expr): (Seq[Identifier], Expr, Map[Identifier, Expr]) = synchronized {
+    val vars = args.toSet
 
-    val grouped : Map[TypeTree, Seq[Identifier]] = allVars.groupBy(_.getType)
-    val subst = grouped.foldLeft(Map.empty[Identifier, Identifier]) { case (subst, (tpe, ids)) =>
-      val currentVars = typedIds(tpe)
+    class Normalizer extends TreeTransformer {
+      var subst: Map[Identifier, Expr] = Map.empty
+      var remainingIds: Map[TypeTree, List[Identifier]] = typedIds.toMap
 
-      val freshCount = ids.size - currentVars.size
-      val typedVars = if (freshCount > 0) {
-        val allIds = currentVars ++ List.range(0, freshCount).map(_ => FreshIdentifier("x", tpe, true))
-        typedIds += tpe -> allIds
-        allIds
-      } else {
-        currentVars
+      def getId(e: Expr): Identifier = {
+        val tpe = TypeOps.bestRealType(e.getType)
+        val newId = remainingIds.get(tpe) match {
+          case Some(x :: xs) =>
+            remainingIds += tpe -> xs
+            x
+          case _ =>
+            val x = FreshIdentifier("x", tpe, true)
+            typedIds(tpe) = typedIds(tpe) :+ x
+            x
+        }
+        subst += newId -> e
+        newId
       }
 
-      subst ++ (ids zip typedVars)
+      override def transform(id: Identifier): Identifier = subst.get(id) match {
+        case Some(Variable(newId)) => newId
+        case Some(_) => scala.sys.error("Should never happen!")
+        case None => getId(id.toVariable)
+      }
+
+      override def transform(e: Expr)(implicit bindings: Map[Identifier, Identifier]): Expr = e match {
+        case expr if isSimple(expr) && (variablesOf(expr) & vars).isEmpty => getId(expr).toVariable
+        case _ => super.transform(e)
+      }
     }
 
-    val normalized = postMap {
-      case Lambda(args, body) => Some(Lambda(args.map(vd => vd.copy(id = subst(vd.id))), body))
-      case Forall(args, body) => Some(Forall(args.map(vd => vd.copy(id = subst(vd.id))), body))
-      case Let(i, e, b)       => Some(Let(subst(i), e, b))
-      case m@MatchExpr(scrut, cses) => Some(MatchExpr(scrut, cses.map { cse =>
-        cse.copy(pattern = replacePatternBinders(cse.pattern, subst))
-      }).copiedFrom(m))
-      case Passes(in, out, cses) => Some(Passes(in, out, cses.map { cse =>
-        cse.copy(pattern = replacePatternBinders(cse.pattern, subst))
-      }))
-      case Variable(id) => Some(Variable(subst(id)))
-      case _ => None
-    } (expr)
+    val n = new Normalizer
+    val bindings = args.map(id => id -> n.getId(id.toVariable)).toMap
+    val normalized = n.transform(matchToIfThenElse(expr))(bindings)
 
-    (normalized, subst)
+    val argsImgSet = bindings.map(_._2).toSet
+    val bodySubst = n.subst.filter(p => !argsImgSet(p._1))
+
+    (args.map(bindings), normalized, bodySubst)
+  }
+
+  def normalizeStructure(lambda: Lambda): (Lambda, Map[Identifier, Expr]) = {
+    val (args, body, subst) = normalizeStructure(lambda.args.map(_.id), lambda.body)
+    (Lambda(args.map(ValDef(_)), body), subst)
+  }
+
+  def normalizeStructure(forall: Forall): (Forall, Map[Identifier, Expr]) = {
+    val (args, body, subst) = normalizeStructure(forall.args.map(_.id), forall.body)
+    (Forall(args.map(ValDef(_)), body), subst)
   }
 
   /** Returns '''true''' if the formula is Ground,
@@ -409,6 +416,9 @@ object ExprOps extends GenTreeOps[Expr] {
         } else {
           None
         }
+
+      case LetTuple(ids, Tuple(elems), body) =>
+        Some(ids.zip(elems).foldRight(body) { case ((id, elem), bd) => Let(id, elem, body) })
 
       /*case LetPattern(patt, e0, body) if isPurelyFunctional(e0) =>
         // Will turn the match-expression with a single case into a list of lets.
@@ -718,14 +728,14 @@ object ExprOps extends GenTreeOps[Expr] {
             case None => patCond
           }
           val newRhs = replaceFromIDs(map, cse.rhs)
-          (realCond.toClause, newRhs)
+          (realCond.toClause, newRhs, cse)
         }
 
         val bigIte = condsAndRhs.foldRight[Expr](Error(m.getType, "Match is non-exhaustive").copiedFrom(m))((p1, ex) => {
           if(p1._1 == BooleanLiteral(true)) {
             p1._2
           } else {
-            IfExpr(p1._1, p1._2, ex)
+            IfExpr(p1._1, p1._2, ex).copiedFrom(p1._3)
           }
         })
 
@@ -994,8 +1004,8 @@ object ExprOps extends GenTreeOps[Expr] {
     postMap(transform, applyRec = true)(expr)
   }
 
-  def simplifyPaths(sf: SolverFactory[Solver], initC: List[Expr] = Nil): Expr => Expr = {
-    new SimplifierWithPaths(sf, initC).transform
+  def simplifyPaths(sf: SolverFactory[Solver], initPC: Path = Path.empty): Expr => Expr = {
+    new SimplifierWithPaths(sf, initPC).transform
   }
 
   trait Traverser[T] {
@@ -1011,7 +1021,7 @@ object ExprOps extends GenTreeOps[Expr] {
   }
 
   trait CollectorWithPaths[T] extends TransformerWithPC with Traverser[Seq[T]] {
-    protected val initPath: Seq[Expr] = Nil
+    protected val initPath: Path = Path.empty
 
     private var results: Seq[T] = Nil
 
@@ -1031,11 +1041,11 @@ object ExprOps extends GenTreeOps[Expr] {
 
     def traverse(e: Expr): Seq[T] = traverse(e, initPath)
 
-    def traverse(e: Expr, init: Expr): Seq[T] = traverse(e, Seq(init))
+    def traverse(e: Expr, init: Expr): Seq[T] = traverse(e, Path(init))
 
-    def traverse(e: Expr, init: Seq[Expr]): Seq[T] = {
+    def traverse(e: Expr, init: Path): Seq[T] = {
       results = Nil
-      rec(e, Path(init))
+      rec(e, init)
       results
     }
   }
@@ -1756,7 +1766,7 @@ object ExprOps extends GenTreeOps[Expr] {
 
           val newFd = fdOuter.duplicate()
 
-          val simp = Simplifiers.bestEffort(ctx, p) _
+          val simp = Simplifiers.bestEffort(ctx, p)((_: Expr))
 
           newFd.body          = fdInner.body.map(b => simplePreTransform(pre)(b))
           newFd.precondition  = mergePre(fdOuter.precondition, fdInner.precondition).map(simp)
@@ -2118,7 +2128,7 @@ object ExprOps extends GenTreeOps[Expr] {
   }
 
 
-  def simpleCorrectnessCond(e: Expr, path: List[Expr], sf: SolverFactory[Solver]): Expr = {
+  def simpleCorrectnessCond(e: Expr, path: Path, sf: SolverFactory[Solver]): Expr = {
     simplifyPaths(sf, path)(
       andJoin( collectCorrectnessConditions(e) map { _._2 } )
     )
@@ -2136,9 +2146,10 @@ object ExprOps extends GenTreeOps[Expr] {
     case _ =>
       fun
   }
-  var msgs: String = ""
-  implicit class BooleanAdder(b: Boolean) {
-    def <(msg: String) = {if(!b) msgs += msg; b}
+  
+  // Use this only to debug isValueOfType
+  private implicit class BooleanAdder(b: Boolean) {
+    @inline def <(msg: String) = {/*if(!b) println(msg); */b}
   }
 
   /** Returns true if expr is a value of type t */
@@ -2175,11 +2186,12 @@ object ExprOps extends GenTreeOps[Expr] {
         (ct == ct2) <  s"$ct not equal to $ct2" &&
         ((args zip ct.fieldsTypes) forall (argstyped => isValueOfType(argstyped._1, argstyped._2)))
       case (FiniteLambda(mapping, default, tpe), exTpe@FunctionType(ins, out)) =>
+        variablesOf(e).isEmpty &&
         tpe == exTpe
       case (Lambda(valdefs, body), FunctionType(ins, out)) =>
         variablesOf(e).isEmpty &&
-        (valdefs zip ins forall (vdin => (vdin._1.getType == vdin._2) < s"${vdin._1.getType} is not equal to ${vdin._2}")) &&
-        (body.getType == out) < s"${body.getType} is not equal to ${out}"
+        (valdefs zip ins forall (vdin => TypeOps.isSubtypeOf(vdin._2, vdin._1.getType) < s"${vdin._2} is not a subtype of ${vdin._1.getType}")) &&
+        (TypeOps.isSubtypeOf(body.getType, out)) < s"${body.getType} is not a subtype of ${out}"
       case (FiniteBag(elements, fbtpe), BagType(tpe)) =>
         fbtpe == tpe && elements.forall{ case (key, value) => isValueOfType(key, tpe) && isValueOfType(value, IntegerType) }
       case _ => false

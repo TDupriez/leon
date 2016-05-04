@@ -17,7 +17,7 @@ case class Element(tag: String, sons: leon.collection.List[WebElement], properti
     (properties.find { we => we.attributeName == attributeName }) map (_.attributeValue)
   }
   def apply(elems: List[WebTree]): Element = {
-    val (sons2, properties2, style2) = leon.webDSL.webBuilding.implicits.extractElements(elems, Nil(), Nil(), Nil())
+    val (sons2, properties2, style2) = leon.webDSL.webBuilding.implicits.extractElements(elems)
     Element(tag, sons ++ sons2, properties ++ properties2, style ++ style2) 
   }
   @ignore
