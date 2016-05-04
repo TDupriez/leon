@@ -13,16 +13,21 @@ import purescala.Types._
 import purescala.Common._
 import purescala.Expressions._
 import purescala.Definitions._
+import solvers.TimeoutableSolverFactory
+import solvers.{PartialModel, SolverFactory}
 import purescala.DefOps
-import solvers.{PartialModel, Model, SolverFactory}
+import solvers.{PartialModel, Model, SolverFactory, SolverContext}
 import solvers.unrolling.UnrollingProcedure
 import scala.collection.mutable.{Map => MutableMap}
 import scala.concurrent.duration._
 import org.apache.commons.lang3.StringEscapeUtils
 
-abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int)
+abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, val bank: EvaluationBank, maxSteps: Int)
   extends ContextualEvaluator(ctx, prog, maxSteps)
-  with DeterministicEvaluator {
+     with DeterministicEvaluator {
+
+  def this(ctx: LeonContext, prog: Program, maxSteps: Int) =
+    this(ctx, prog, new EvaluationBank, maxSteps)
 
   val name = "evaluator"
   val description = "Recursive interpreter for PureScala expressions"
@@ -69,12 +74,13 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
 
     case Let(i,ex,b) =>
       val first = e(ex)
+      //println(s"Eval $i to $first")
       e(b)(rctx.withNewVar(i, first), gctx)
 
     case Assert(cond, oerr, body) =>
       e(IfExpr(Not(cond), Error(expr.getType, oerr.getOrElse("Assertion failed @"+expr.getPos)), body))
 
-    case en@Ensuring(body, post) =>
+    case en @ Ensuring(body, post) =>
       e(en.toAssert)
 
     case Error(tpe, desc) =>
@@ -131,6 +137,8 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
 
       val evArgs = args map e
 
+      //println(s"calling ${tfd.id} with $evArgs")
+
       // build a mapping for the function...
       val frame = rctx.withNewVars(tfd.paramSubst(evArgs))
 
@@ -154,6 +162,8 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
         val body = tfd.body.getOrElse(rctx.mappings(tfd.id))
         e(body)(frame, gctx)
       }
+
+      //println(s"Gave $callResult")
 
       tfd.postcondition match  {
         case Some(post) =>
@@ -210,12 +220,15 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
 
     case CaseClass(cct, args) =>
       val cc = CaseClass(cct, args.map(e))
-      if (cct.classDef.hasInvariant) {
-        val i = FreshIdentifier("i", cct)
-        e(FunctionInvocation(cct.invariant.get, Seq(Variable(i))))(rctx.withNewVar(i, cc), gctx) match {
-          case BooleanLiteral(true) =>
-          case BooleanLiteral(false) =>
-            throw RuntimeError("ADT invariant violation for " + cct.classDef.id.asString + " reached in evaluation.: " + cct.invariant.get.asString)
+      val check = bank.invariantCheck(cc)
+      if (check.isFailure) {
+        throw RuntimeError("ADT invariant violation for " + cct.classDef.id.asString + " reached in evaluation.: " + cct.invariant.get.asString)
+      } else if (check.isRequired) {
+        e(FunctionInvocation(cct.invariant.get, Seq(cc))) match {
+          case BooleanLiteral(success) =>
+            bank.invariantResult(cc, success)
+            if (!success)
+              throw RuntimeError("ADT invariant violation for " + cct.classDef.id.asString + " reached in evaluation.: " + cct.invariant.get.asString)
           case other =>
             throw RuntimeError(typeErrorMsg(other, BooleanType))
         }
@@ -269,12 +282,12 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
         case (le,re) => throw EvalError(typeErrorMsg(le, StringType))
       }
     case StringLength(a) => e(a) match {
-      case StringLiteral(a) => InfiniteIntegerLiteral(a.length)
-      case res => throw EvalError(typeErrorMsg(res, IntegerType))
+      case StringLiteral(a) => IntLiteral(a.length)
+      case res => throw EvalError(typeErrorMsg(res, Int32Type))
     }
     case SubString(a, start, end) => (e(a), e(start), e(end)) match {
-      case (StringLiteral(a), InfiniteIntegerLiteral(b), InfiniteIntegerLiteral(c))  =>
-        StringLiteral(a.substring(b.toInt, c.toInt))
+      case (StringLiteral(a), IntLiteral(b), IntLiteral(c))  =>
+        StringLiteral(a.substring(b, c))
       case res => throw EvalError(typeErrorMsg(res._1, StringType))
     }
     case Int32ToString(a) => e(a) match {
@@ -585,14 +598,7 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
 
     case l @ Lambda(_, _) =>
       val mapping = variablesOf(l).map(id => id -> e(Variable(id))).toMap
-      val newLambda = replaceFromIDs(mapping, l).asInstanceOf[Lambda]
-      val (normalized, _) = normalizeStructure(matchToIfThenElse(newLambda))
-      val nl = normalized.asInstanceOf[Lambda]
-      if (!gctx.lambdas.isDefinedAt(nl)) {
-        val (norm, _) = normalizeStructure(matchToIfThenElse(l))
-        gctx.lambdas += (nl -> norm.asInstanceOf[Lambda])
-      }
-      nl
+      replaceFromIDs(mapping, l).asInstanceOf[Lambda]
 
     case FiniteLambda(mapping, dflt, tpe) =>
       FiniteLambda(mapping.map(p => p._1.map(e) -> e(p._2)), e(dflt), tpe)
@@ -609,13 +615,18 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
       frlCache.getOrElse((f, context), {
         val tStart = System.currentTimeMillis
 
-        val newCtx = ctx.copy(options = ctx.options.map {
-          case LeonOption(optDef, value) if optDef == UnrollingProcedure.optFeelingLucky =>
-            LeonOption(optDef)(false)
-          case opt => opt
-        })
+        val newOptions = Seq(
+          LeonOption(UnrollingProcedure.optFeelingLucky)(false),
+          LeonOption(UnrollingProcedure.optSilentErrors)(true),
+          LeonOption(UnrollingProcedure.optCheckModels)(true)
+        )
 
-        val solverf = SolverFactory.getFromSettings(newCtx, program).withTimeout(1.second)
+        val newCtx = ctx.copy(options = ctx.options.filterNot { opt =>
+          newOptions.exists(no => opt.optionDef == no.optionDef)
+        } ++ newOptions)
+
+        val sctx    = SolverContext(newCtx, bank)
+        val solverf = SolverFactory.getFromSettings(sctx, program).withTimeout(1.second)
         val solver  = solverf.getNewSolver()
 
         try {
@@ -629,12 +640,7 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
 
               val domainCnstr = orJoin(quorums.map { quorum =>
                 val quantifierDomains = quorum.flatMap { case (path, caller, args) =>
-                  val matcher = e(caller) match {
-                    case l: Lambda => gctx.lambdas.getOrElse(l, l)
-                    case ev => ev
-                  }
-
-                  val domain = pm.domains.get(matcher)
+                  val domain = pm.domains.get(e(caller))
                   args.zipWithIndex.flatMap {
                     case (Variable(id),idx) if quantifiers(id) =>
                       Some(id -> domain.map(cargs => path -> cargs(idx)))
@@ -751,7 +757,8 @@ abstract class RecursiveEvaluator(ctx: LeonContext, prog: Program, maxSteps: Int
       clpCache.getOrElse((choose, ins), {
         val tStart = System.currentTimeMillis
 
-        val solverf = SolverFactory.getFromSettings(ctx, program)
+        val sctx    = SolverContext(ctx, bank)
+        val solverf = SolverFactory.getFromSettings(sctx, program).withTimeout(1.seconds)
         val solver  = solverf.getNewSolver()
 
         try {

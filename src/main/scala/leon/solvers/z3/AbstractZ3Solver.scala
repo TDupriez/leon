@@ -5,7 +5,7 @@ package solvers.z3
 
 import leon.utils._
 
-import z3.scala._
+import z3.scala.{Z3Solver => ScalaZ3Solver, _}
 import solvers._
 import purescala.Common._
 import purescala.Definitions._
@@ -19,17 +19,13 @@ import purescala.Types._
 case class UnsoundExtractionException(ast: Z3AST, msg: String)
   extends Exception("Can't extract " + ast + " : " + msg)
 
-object AbstractZ3Solver
-
 // This is just to factor out the things that are common in "classes that deal
 // with a Z3 instance"
-trait AbstractZ3Solver extends Solver {
+trait AbstractZ3Solver extends Z3Solver {
 
   val program : Program
 
   val library = program.library
-
-  protected val reporter : Reporter = context.reporter
 
   context.interruptManager.registerForInterrupts(this)
 
@@ -47,11 +43,17 @@ trait AbstractZ3Solver extends Solver {
     }
   }
 
+  protected var z3 : Z3Context = new Z3Context(
+    "MODEL"             -> true,
+    "TYPE_CHECK"        -> true,
+    "WELL_SORTED_CHECK" -> true
+  )
+
+  // @nv: This MUST take place AFTER Z3Context was created!!
+  // Well... actually maybe not, but let's just leave it here to be sure
   toggleWarningMessages(true)
 
-  protected[leon] var z3 : Z3Context = null
-
-  lazy protected val solver = z3.mkSolver()
+  protected var solver : ScalaZ3Solver = null
 
   override def free(): Unit = {
     freed = true
@@ -95,13 +97,7 @@ trait AbstractZ3Solver extends Solver {
   var isInitialized = false
   protected[leon] def initZ3(): Unit = {
     if (!isInitialized) {
-      val timer = context.timers.solvers.z3.init.start()
-
-      z3 = new Z3Context(
-        "MODEL"             -> true,
-        "TYPE_CHECK"        -> true,
-        "WELL_SORTED_CHECK" -> true
-      )
+      solver = z3.mkSolver()
 
       functions.clear()
       lambdas.clear()
@@ -114,8 +110,6 @@ trait AbstractZ3Solver extends Solver {
       prepareSorts()
 
       isInitialized = true
-
-      timer.stop()
     }
   }
 
@@ -160,7 +154,7 @@ trait AbstractZ3Solver extends Solver {
     val defs = for ((_, DataType(sym, cases)) <- adts) yield {(
       sym.uniqueName,
       cases.map(c => c.sym.uniqueName),
-      cases.map(c => c.fields.map{ case(id, tpe) => (id.uniqueName, typeToSortRef(tpe))})
+      cases.map(c => c.fields.map { case(id, tpe) => (id.uniqueName, typeToSortRef(tpe))})
     )}
 
     val resultingZ3Info = z3.mkADTSorts(defs)

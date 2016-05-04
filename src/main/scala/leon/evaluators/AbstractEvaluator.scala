@@ -155,6 +155,13 @@ class AbstractEvaluator(ctx: LeonContext, prog: Program) extends ContextualEvalu
             (Application(ecaller, eargs), abs_value)
           }
       }
+      
+    case l @ Lambda(_, _) =>
+      import ExprOps._
+      val mapping = variablesOf(l).map(id => id -> e(Variable(id))).toMap
+      (
+      replaceFromIDs(mapping.mapValues(_._1), l).asInstanceOf[Lambda],
+      replaceFromIDs(mapping.mapValues(_._2), l).asInstanceOf[Lambda])
 
     case Operator(es, builder) =>
       val (ees, ts) = es.map(e).unzip

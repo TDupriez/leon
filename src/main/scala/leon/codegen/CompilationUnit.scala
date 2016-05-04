@@ -25,9 +25,11 @@ import scala.collection.JavaConverters._
 import java.lang.reflect.Constructor
 
 import synthesis.Problem
+import evaluators._
 
 class CompilationUnit(val ctx: LeonContext,
                       val program: Program,
+                      val bank: EvaluationBank = new EvaluationBank,
                       val params: CodeGenParams = CodeGenParams.default) extends CodeGeneration {
 
 
@@ -213,9 +215,13 @@ class CompilationUnit(val ctx: LeonContext,
     case CaseClass(cct, args) =>
       caseClassConstructor(cct.classDef) match {
         case Some(cons) =>
-          val tpeParam = if (cct.tps.isEmpty) Seq() else Seq(cct.tps.map(registerType).toArray)
-          val jvmArgs = monitor +: (tpeParam ++ args.map(valueToJVM))
-          cons.newInstance(jvmArgs.toArray : _*).asInstanceOf[AnyRef]
+          try {
+            val tpeParam = if (cct.tps.isEmpty) Seq() else Seq(cct.tps.map(registerType).toArray)
+            val jvmArgs = monitor +: (tpeParam ++ args.map(valueToJVM))
+            cons.newInstance(jvmArgs.toArray : _*).asInstanceOf[AnyRef]
+          } catch {
+            case e : java.lang.reflect.InvocationTargetException => throw e.getCause
+          }
         case None =>
           ctx.reporter.fatalError("Case class constructor not found?!?")
       }

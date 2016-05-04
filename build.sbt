@@ -22,11 +22,17 @@ site.settings
 
 site.sphinxSupport()
 
-if(System.getProperty("sun.arch.data.model") == "64") {
-  unmanagedBase <<= baseDirectory { base => base / "unmanaged" / "64" }
+val osName = Option(System.getProperty("os.name")).getOrElse("").toLowerCase()
+
+val osArch = System.getProperty("sun.arch.data.model")
+
+if(osName.indexOf("win") != -1) {
+  (unmanagedJars in Compile) += baseDirectory.value / "unmanaged" / s"scalaz3-win-$osArch.jar"
 } else {
-  unmanagedBase <<= baseDirectory { base => base / "unmanaged" / "32" }
+  (unmanagedJars in Compile) += baseDirectory.value / "unmanaged" / s"scalaz3-unix-$osArch.jar"
 }
+
+unmanagedBase <<= baseDirectory { base => base / "unmanaged" / osArch }
 
 resolvers ++= Seq(
   "Typesafe Repository" at "http://repo.typesafe.com/typesafe/releases/",
@@ -142,12 +148,21 @@ lazy val IntegrTest = config("integration") extend(Test)
 testOptions in IntegrTest := Seq(Tests.Argument("-oDF"), Tests.Filter(_ startsWith "leon.integration."))
 
 
+def regressionFilter(name: String, native: Boolean = false): Boolean = name.startsWith("leon.regression") && (name.endsWith("NativeZ3") == native)
 
 // Regression Tests
 lazy val RegressionTest = config("regression") extend(Test)
 
-testOptions in RegressionTest := Seq(Tests.Argument("-oDF"), Tests.Filter(_ startsWith "leon.regression."))
+testOptions in RegressionTest := Seq(Tests.Argument("-oDF"), Tests.Filter(regressionFilter(_)))
 
+// Regression Tests that heavily depend on native Z3
+lazy val NativeZ3RegressionTest = config("native") extend(Test)
+
+testOptions in NativeZ3RegressionTest := Seq(Tests.Argument("-oDF"), Tests.Filter(regressionFilter(_, native = true)))
+
+parallelExecution in NativeZ3RegressionTest := false
+
+logBuffered in NativeZ3RegressionTest := false
 
 
 // Isabelle Tests
@@ -171,11 +186,14 @@ def ghProject(repo: String, version: String) = RootProject(uri(s"${repo}#${versi
 
 lazy val bonsai      = ghProject("git://github.com/colder/bonsai.git",     "10eaaee4ea0ff6567f4f866922cb871bae2da0ac")
 lazy val scalaSmtlib = ghProject("git://github.com/regb/scala-smtlib.git", "57834acfe2e3bc36862be52e4d99829bb8ff0ca7")
+lazy val cafebabe    = ghProject("git://github.com/psuter/cafebabe.git",   "49dce3c83450f5fa0b5e6151a537cc4b9f6a79a6")
 
 lazy val root = (project in file(".")).
-  configs(RegressionTest, IsabelleTest, GenCTest, IntegrTest).
+  configs(RegressionTest, NativeZ3RegressionTest, IsabelleTest, GenCTest, IntegrTest).
   dependsOn(bonsai).
   dependsOn(scalaSmtlib).
+  dependsOn(cafebabe).
+  settings(inConfig(NativeZ3RegressionTest)(Defaults.testTasks ++ testSettings): _*).
   settings(inConfig(RegressionTest)(Defaults.testTasks ++ testSettings): _*).
   settings(inConfig(IntegrTest)(Defaults.testTasks ++ testSettings): _*).
   settings(inConfig(IsabelleTest)(Defaults.testTasks ++ testSettings): _*).
