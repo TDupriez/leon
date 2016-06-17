@@ -53,8 +53,16 @@ object Common {
 
     override def hashCode: Int = globalId
 
+//    override def toString: String = {
+//      if (alwaysShowUniqueID) uniqueName else name
+//    }
+
     override def toString: String = {
-      if (alwaysShowUniqueID) uniqueName else name
+      this.getPos match{
+        case r:RangePosition =>
+          val dollar = "$"
+          s"{(${r.lineFrom}, ${r.colFrom})-(${r.lineTo}, ${r.colTo})$dollar$id}"
+      }
     }
 
     def uniqueNameDelimited(delim: String) = s"$name$delim$id"

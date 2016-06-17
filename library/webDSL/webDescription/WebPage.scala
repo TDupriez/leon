@@ -5,4 +5,5 @@ package leon.webDSL.webDescription
 
 case class WebPage(main: WebElement)
 
+// The assumption is that in a WebPageWithIDedWebElements, each WebElement is immediately contained in a WebElementWithID
 case class WebPageWithIDedWebElements(main: WebElementWithID)
